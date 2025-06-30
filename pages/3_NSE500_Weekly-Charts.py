@@ -31,7 +31,7 @@ def get_company_name(ticker: str, cache_date: str) -> str:
         return ticker
 
 def load_tickers() -> list[str]:
-    file_path = "data/Charts-data/tickers_Nifty500.txt"
+    file_path = "data/Charts-data/tickers_Nifty500.txt"  # ✅ Corrected spelling
     if not os.path.exists(file_path):
         st.error(f"Ticker file not found: {file_path}")
         return []
