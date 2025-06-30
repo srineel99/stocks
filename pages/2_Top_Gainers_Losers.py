@@ -15,8 +15,7 @@ html("""
 st.set_page_config(page_title="Live Intraday Charts", layout="wide")
 st.title("🔄 Live Intraday Charts (1-min) — Gainers & Losers from CSV")
 
-base_dir = os.path.dirname(__file__)
-GAIN_LOSS_DIR = os.path.abspath(os.path.join(base_dir, "..", "data", "TOP-Gain-loosers"))
+GAIN_LOSS_DIR = "data/TOP-Gain-loosers"
 
 def newest(pattern):
     files = glob.glob(os.path.join(GAIN_LOSS_DIR, pattern))
