@@ -53,7 +53,7 @@ def get_company_name(ticker: str, cache_date: str) -> str:
     except Exception:
         return ticker
 
-def load_tickers(file_path="C:/Streamlit/data/Charts-data/tickers_Nitfy500.txt") -> list[str]:
+def load_tickers(file_path="/data/Charts-data/tickers_Nitfy500.txt") -> list[str]:
     """
     Load list of Nifty500 tickers from a text file (one symbol per line).
     """
