@@ -13,7 +13,7 @@ def get_cache_date() -> str:
     Returns a date-string to use as cache key:
     - If now ≥15:45 IST, return today;
     - else return yesterday.
-    This ensures we refresh data once daily after market close.
+    Ensures we refresh data once daily after market close.
     """
     now = datetime.now(IST)
     cutoff = now.replace(hour=15, minute=45, second=0, microsecond=0)
@@ -24,17 +24,19 @@ def get_cache_date() -> str:
 
 CACHE_DATE = get_cache_date()
 
-st.set_page_config(page_title="Stock Charts (2Y)", layout="wide")
-st.title("2-Year Close-Price Charts (All Tickers)")
+st.set_page_config(page_title="Stock Charts (5Y Weekly)", layout="wide")
+st.title("🔄 5-Year Weekly Close-Price Charts (All Tickers)")
 
-# --- Helpers --------------------------------------------------------------
+# --- Helpers -------------------------------------------------------------
 @st.cache_data(ttl=24*3600)
 def download_data(ticker: str, cache_date: str) -> pd.DataFrame:
-    """Fetch 2 years of daily adjusted data for a ticker."""
+    """
+    Fetch 5 years of weekly adjusted data for a ticker.
+    """
     df = yf.download(
         ticker,
-        period="2y",
-        interval="1d",
+        period="5y",
+        interval="1wk",
         progress=False,
         auto_adjust=True
     )
@@ -42,7 +44,9 @@ def download_data(ticker: str, cache_date: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=24*3600)
 def get_company_name(ticker: str, cache_date: str) -> str:
-    """Lookup the longName (company name) for a ticker, fallback to symbol."""
+    """
+    Lookup the longName (company name) for a ticker, fallback to symbol.
+    """
     try:
         info = yf.Ticker(ticker).info
         return info.get("longName") or info.get("shortName") or ticker
@@ -50,6 +54,9 @@ def get_company_name(ticker: str, cache_date: str) -> str:
         return ticker
 
 def load_tickers(file_path="C:/Streamlit/data/Charts-data/tickers_Nitfy500.txt") -> list[str]:
+    """
+    Load list of Nifty500 tickers from a text file (one symbol per line).
+    """
     with open(file_path) as f:
         return [line.strip() for line in f if line.strip()]
 
