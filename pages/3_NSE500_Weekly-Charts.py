@@ -31,8 +31,10 @@ def get_company_name(ticker: str, cache_date: str) -> str:
         return ticker
 
 def load_tickers() -> list[str]:
-    base_dir = os.path.dirname(__file__)
-    file_path = os.path.abspath(os.path.join(base_dir, "..", "data", "Charts-data", "tickers_Nifty500.txt"))
+    file_path = "data/Charts-data/tickers_Nifty500.txt"
+    if not os.path.exists(file_path):
+        st.error(f"Ticker file not found: {file_path}")
+        return []
     with open(file_path, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
