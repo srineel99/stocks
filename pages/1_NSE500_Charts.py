@@ -4,23 +4,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.dates import MonthLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
+import os
 
 # --- Timezone setup for IST (UTC+5:30) -----------------------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_cache_date() -> str:
-    """
-    Returns a date-string to use as cache key:
-    - If now ≥15:45 IST, return today;
-    - else return yesterday.
-    This ensures we refresh data once daily after market close.
-    """
     now = datetime.now(IST)
     cutoff = now.replace(hour=15, minute=45, second=0, microsecond=0)
-    if now >= cutoff:
-        return now.date().isoformat()
-    else:
-        return (now.date() - timedelta(days=1)).isoformat()
+    return now.date().isoformat() if now >= cutoff else (now.date() - timedelta(days=1)).isoformat()
 
 CACHE_DATE = get_cache_date()
 
@@ -30,7 +22,6 @@ st.title("2-Year Close-Price Charts (All Tickers)")
 # --- Helpers --------------------------------------------------------------
 @st.cache_data(ttl=24*3600)
 def download_data(ticker: str, cache_date: str) -> pd.DataFrame:
-    """Fetch 2 years of daily adjusted data for a ticker."""
     df = yf.download(
         ticker,
         period="2y",
@@ -42,15 +33,17 @@ def download_data(ticker: str, cache_date: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=24*3600)
 def get_company_name(ticker: str, cache_date: str) -> str:
-    """Lookup the longName (company name) for a ticker, fallback to symbol."""
     try:
         info = yf.Ticker(ticker).info
         return info.get("longName") or info.get("shortName") or ticker
     except Exception:
         return ticker
 
-def load_tickers(file_path="/data/Charts-data/tickers_Nitfy500.txt") -> list[str]:
-    with open(file_path) as f:
+def load_tickers() -> list[str]:
+    # Dynamically get path relative to this script
+    base_dir = os.path.dirname(__file__)
+    file_path = os.path.abspath(os.path.join(base_dir, "..", "data", "Charts-data", "tickers_Nifty500.txt"))
+    with open(file_path, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
 # --- Load and display count ---------------------------------------------
@@ -68,7 +61,6 @@ if st.button("Download Data for All Tickers"):
         progress.progress((i + 1) / len(tickers))
     st.success("All data downloaded!")
 
-# initialize session cache if first run
 if "data" not in st.session_state:
     st.session_state.data = {}
 
@@ -85,20 +77,14 @@ for idx in range(0, len(tickers), 2):
             cols[col_i].warning(f"No data for {symbol}. Click Download first.")
             continue
 
-        # fetch company name once daily
         name = get_company_name(symbol, CACHE_DATE)
-
-        # prepare figure
         fig, ax = plt.subplots(figsize=(6, 3))
         ax.plot(df.index, df["Close"], linewidth=1)
         ax.set_title(f"{symbol} — {name}", fontsize=11)
         ax.set_ylabel("Close", fontsize=9)
-
-        # date ticks: every 3 months
         ax.xaxis.set_major_locator(MonthLocator(interval=3))
         ax.xaxis.set_major_formatter(DateFormatter("%b %Y"))
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
-
         plt.tight_layout()
         cols[col_i].pyplot(fig)
         plt.close(fig)
