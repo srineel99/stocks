@@ -6,30 +6,18 @@ import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from streamlit.components.v1 import html
 
-# ─────────────────────────────────────────────────────
-# Auto-refresh every 30 seconds
-# ─────────────────────────────────────────────────────
 html("""
     <script>
       setTimeout(() => { window.location.reload(); }, 30000);
     </script>
 """, height=0)
 
-# ─────────────────────────────────────────────────────
-# Page setup
-# ─────────────────────────────────────────────────────
 st.set_page_config(page_title="Live Intraday Charts", layout="wide")
 st.title("🔄 Live Intraday Charts (1-min) — Gainers & Losers from CSV")
 
-# ─────────────────────────────────────────────────────
-# Resolve CSV folder path relative to this script
-# ─────────────────────────────────────────────────────
 base_dir = os.path.dirname(__file__)
 GAIN_LOSS_DIR = os.path.abspath(os.path.join(base_dir, "..", "data", "TOP-Gain-loosers"))
 
-# ─────────────────────────────────────────────────────
-# Get latest CSV file by pattern
-# ─────────────────────────────────────────────────────
 def newest(pattern):
     files = glob.glob(os.path.join(GAIN_LOSS_DIR, pattern))
     return max(files, key=os.path.getmtime) if files else None
@@ -46,9 +34,6 @@ st.markdown(
     f"📄 **Losers CSV:** `{os.path.basename(l_file)}`"
 )
 
-# ─────────────────────────────────────────────────────
-# Load SYMBOL column from CSV and normalize to .NS
-# ─────────────────────────────────────────────────────
 def load_syms(path):
     df = pd.read_csv(path)
     df.columns = df.columns.str.strip().str.upper()
@@ -62,20 +47,14 @@ gainers = load_syms(g_file)
 losers  = load_syms(l_file)
 st.success(f"✅ Loaded {len(gainers)} gainers and {len(losers)} losers.")
 
-# ─────────────────────────────────────────────────────
-# Download 1-minute intraday data and cache for 30s
-# ─────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
 def fetch_intraday(sym):
-    return yf.download(
-        sym, period="1d", interval="1m", prepost=True,
-        progress=False, auto_adjust=True
-    )
+    return yf.download(sym, period="1d", interval="1m", prepost=True,
+                       progress=False, auto_adjust=True)
 
 all_syms = gainers + losers
 prog = st.progress(0)
 intraday = {}
-
 for i, sym in enumerate(all_syms):
     try:
         intraday[sym] = fetch_intraday(sym)
@@ -85,23 +64,18 @@ for i, sym in enumerate(all_syms):
 
 st.success("📊 Intraday data loaded for all tickers.")
 
-# ─────────────────────────────────────────────────────
-# Chart plotting — 2-column layout, 5-min tick
-# ─────────────────────────────────────────────────────
 def plot_group(title, syms):
     st.header(title)
     for i in range(0, len(syms), 2):
         cols = st.columns(2)
         for j in (0, 1):
             idx = i + j
-            if idx >= len(syms):
-                break
+            if idx >= len(syms): break
             sym = syms[idx]
             df = intraday.get(sym, pd.DataFrame())
             if df.empty:
                 cols[j].warning(f"No intraday data for {sym}")
                 continue
-
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.plot(df.index, df["Close"], lw=1)
             ax.set_title(sym)
