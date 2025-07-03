@@ -4,8 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, time, timedelta, timezone
-import os
-import time as systime
+import os, time as systime, random
 
 # -------------------- Timezone Setup (IST) --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -25,14 +24,15 @@ def load_tickers():
         st.error(f"Ticker file not found: {path}")
         return []
     with open(path) as f:
-        return [
+        all_tickers = [
             line.strip().upper() if line.strip().upper().endswith(".NS")
             else line.strip().upper() + ".NS"
             for line in f if line.strip()
         ]
+    return random.sample(all_tickers, min(100, len(all_tickers)))  # 🎯 Random 100
 
 tickers = load_tickers()
-st.markdown(f"📊 **Total Tickers:** {len(tickers)}")
+st.markdown(f"📊 **Randomly Selected Tickers:** {len(tickers)}")
 
 # -------------------- Fetch Intraday Data --------------------
 def fetch_intraday_data(ticker):
@@ -43,7 +43,7 @@ def fetch_intraday_data(ticker):
         df.index = df.index.tz_convert(IST)
         start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
         return df[df.index >= start_time]
-    except Exception:
+    except:
         return pd.DataFrame()
 
 # -------------------- Classify Trend --------------------
@@ -61,7 +61,7 @@ def classify_trend(df, threshold=0.05):
 
 # -------------------- Fetch and Classify --------------------
 available_data = {"ascending": [], "descending": [], "flat": []}
-progress = st.progress(0, text="⏳ Fetching and classifying live intraday charts...")
+progress = st.progress(0, text="⏳ Fetching and classifying 5m intraday data...")
 
 for i, ticker in enumerate(tickers):
     df = fetch_intraday_data(ticker)
@@ -72,11 +72,15 @@ for i, ticker in enumerate(tickers):
     progress.progress((i + 1) / len(tickers))
 progress.empty()
 
-# -------------------- Display Charts Grouped by Trend --------------------
+# -------------------- Display Charts --------------------
 def plot_chart(symbol, df, slope):
+    try:
+        slope_val = float(slope)
+    except:
+        slope_val = 0.0
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(df.index, df["Close"], lw=1.2)
-    ax.set_title(f"{symbol} (slope={slope:.2f})", fontsize=10)
+    ax.set_title(f"{symbol} (slope={slope_val:.2f})", fontsize=10)
     ax.set_ylabel("Close", fontsize=8)
     ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
     ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
@@ -95,10 +99,11 @@ def display_group(title, group_data):
             symbol, df, slope = group_data[idx]
             cols[j].pyplot(plot_chart(symbol, df, slope))
 
+# -------------------- Show All Groups --------------------
 if not any(available_data.values()):
     st.warning("⚠️ No intraday data available for any stock. Try again later.")
 else:
-    st.success("✅ Live intraday data loaded and sorted by trend!")
+    st.success("✅ Charts loaded and sorted by trend.")
     display_group("📈 Ascending (≈ +45°) Charts", available_data["ascending"])
     display_group("📉 Descending (≈ -45°) Charts", available_data["descending"])
     display_group("➡️ Flat/Other Charts", available_data["flat"])
