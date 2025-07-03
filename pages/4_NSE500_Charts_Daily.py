@@ -6,11 +6,15 @@ from datetime import datetime, timedelta, timezone
 import matplotlib.dates as mdates
 import os
 
-# -------------------- Timezone Setup --------------------
+# -------------------- IST Time Handling --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 
+def get_ist_now():
+    """Returns current time in IST, independent of server time zone."""
+    return datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(IST)
+
 def get_cache_date() -> str:
-    now = datetime.now(IST)
+    now = get_ist_now()
     return now.date().isoformat()
 
 CACHE_DATE = get_cache_date()
@@ -48,7 +52,9 @@ def download_data(ticker: str, interval: str) -> pd.DataFrame:
     if df.empty:
         return df
     df.index = df.index.tz_localize(None)
-    df = df[df.index >= datetime.combine(datetime.now().date(), datetime.strptime("09:15", "%H:%M").time())]
+    ist_today = get_ist_now().date()
+    market_start = datetime.combine(ist_today, datetime.strptime("09:15", "%H:%M").time())
+    df = df[df.index >= market_start]
     return df
 
 @st.cache_data(ttl=86400)
@@ -59,8 +65,13 @@ def get_company_name(ticker: str) -> str:
     except Exception:
         return ticker
 
+# -------------------- Display Info --------------------
 st.markdown(f"**🧾 Total Tickers:** {len(tickers)}")
-st.markdown(f"**📅 Showing {interval} Data Since 9:15 AM — {CACHE_DATE}**")
+st.markdown(f"**📅 Showing {interval} Data Since 9:15 AM IST — {CACHE_DATE}**")
+
+# Warn if before 9:15 IST
+if get_ist_now().time() < datetime.strptime("09:15", "%H:%M").time():
+    st.warning("⚠️ Market opens at 9:15 AM IST. Please try again after that for today's data.")
 
 # -------------------- Download Button --------------------
 download_label = f"📥 Download Today’s {interval} Intraday Data for All Tickers"
@@ -127,7 +138,6 @@ else:
             ax.set_ylabel("Price", fontsize=9)
             ax.set_xlabel("Time", fontsize=8)
 
-            # Format time axis
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
             interval_minutes = int(interval.replace("m", ""))
             ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=interval_minutes))
