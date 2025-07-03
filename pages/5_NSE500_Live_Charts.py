@@ -1,129 +1,136 @@
 import streamlit as st
-import pandas as pd
 import yfinance as yf
+import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.dates import DateFormatter, MinuteLocator
-from datetime import datetime, timedelta, timezone
 import numpy as np
 import os
-import random
+from datetime import datetime, timedelta, timezone
+from matplotlib.dates import DateFormatter
 
-# --- Timezone and cache setup ---
-IST = timezone(timedelta(hours=5, minutes=30))
-TODAY = datetime.now(IST).date()
-CACHE_FILE = f"data/Charts-data/live_cache_{TODAY}.pkl"
-
-# --- Load tickers ---
-TICKER_FILE = "data/Charts-data/tickers_Nifty500.txt"
-with open(TICKER_FILE, "r") as f:
-    TICKERS = sorted([line.strip() for line in f if line.strip()])
-
-# --- Streamlit page config ---
+# ---------- Setup ----------
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
 st.title("📈 NSE500 Live Charts")
-st.markdown(f"📅 **Showing:** `{TODAY}`")
-st.info("🔄 Refresh the page to load latest data.")
 
-# --- Sidebar filter ---
-group_option = st.sidebar.radio("📂 Show Chart Group", ["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"])
+IST = timezone(timedelta(hours=5, minutes=30))
+today = datetime.now(IST).date()
+st.markdown(f"📅 **Showing:** `{today}`")
 
-# --- Utilities ---
-def is_valid_slope(slope):
-    return slope is not None and isinstance(slope, (int, float)) and np.isfinite(slope)
+# ---------- Cache File ----------
+CACHE_FILE = f"data/cache/live_data_{today}.pkl"
 
-def plot_chart(symbol: str, df: pd.DataFrame, slope=None):
-    fig, ax = plt.subplots(figsize=(5, 2))
-    ax.plot(df["Datetime"], df["Close"])
-    if is_valid_slope(slope):
-        ax.set_title(f"{symbol} (slope={slope:.2f})", fontsize=9)
-    else:
-        ax.set_title(symbol, fontsize=9)
-    ax.set_ylabel("Price")
-    ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
-    ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    return fig
+# ---------- Load Tickers ----------
+TICKER_FILE = "data/Charts-data/tickers_Nifty500.txt"
+with open(TICKER_FILE) as f:
+    tickers = [line.strip() for line in f if line.strip()]
+st.markdown(f"📌 **Total Tickers Loaded:** `{len(tickers)}`")
 
-def calculate_slope(df):
-    df = df.reset_index(drop=True)
-    x = np.arange(len(df))
-    y = df["Close"].values
-    if len(x) < 2:
+# ---------- Sidebar Group Selection ----------
+st.sidebar.markdown("### 🗂️ Show Chart Group")
+chart_group = st.sidebar.radio(
+    "Group by trend angle:",
+    options=["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"],
+    index=0
+)
+
+# ---------- Data Downloader ----------
+@st.cache_data(ttl=600)
+def fetch_intraday_data(symbol):
+    try:
+        df = yf.download(symbol, interval="1m", period="1d", progress=False)
+        df = df[df.index >= df.index[0]]  # Keep as-is from earliest
+        df = df[~df.index.duplicated(keep='first')]
+        return df[["Close"]].rename(columns={"Close": "Price"})
+    except Exception:
         return None
-    A = np.vstack([x, np.ones(len(x))]).T
-    m, _ = np.linalg.lstsq(A, y, rcond=None)[0]
-    return m
 
-@st.cache_data(ttl=600, show_spinner="📥 Downloading live intraday data...")
 def download_live_data():
     data = {}
-    selected_tickers = random.sample(TICKERS, len(TICKERS))  # full list
-    for symbol in selected_tickers:
-        try:
-            df = yf.download(
-                tickers=symbol,
-                interval="5m",
-                period="1d",
-                progress=False
-            )
-            if df.empty:
-                continue
-            df = df[df.index.time >= datetime.strptime("09:15", "%H:%M").time()]
-            df = df.tz_localize("UTC").tz_convert("Asia/Kolkata")
-            df = df.reset_index()[["Datetime", "Close"]]
+    for symbol in tickers:
+        df = fetch_intraday_data(symbol)
+        if df is not None and not df.empty:
             data[symbol] = df
-        except Exception:
-            continue
     return data
 
-# --- Download or Load Cached ---
+# ---------- Load from cache or fetch ----------
 if os.path.exists(CACHE_FILE):
-    live_data = pd.read_pickle(CACHE_FILE)
+    try:
+        live_data = pd.read_pickle(CACHE_FILE)
+        if not live_data:
+            raise ValueError("Empty cache file")
+    except Exception:
+        st.warning("⚠️ Cache file is empty or broken. Re-downloading...")
+        live_data = download_live_data()
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        pd.to_pickle(live_data, CACHE_FILE)
 else:
     live_data = download_live_data()
     os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
     pd.to_pickle(live_data, CACHE_FILE)
 
-st.success(f"📌 Total Tickers Loaded: `{len(live_data)}`")
+# ---------- Optional: Force Refresh ----------
+if st.button("♻️ Refresh the page to load latest data."):
+    live_data = download_live_data()
+    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+    pd.to_pickle(live_data, CACHE_FILE)
+    st.experimental_rerun()
 
-# --- Grouping by slope ---
-ascending = []
-descending = []
-neutral = []
+if not live_data:
+    st.warning("⚠️ No intraday data available. Please try again later.")
+    st.stop()
 
+# ---------- Slope Calculation ----------
+def calculate_slope(df):
+    y = df["Price"].values
+    x = np.arange(len(y))
+    if len(x) < 2:
+        return None
+    slope, _ = np.polyfit(x, y, 1)
+    return slope
+
+# ---------- Chart Plotter ----------
+def plot_chart(symbol, df, slope=None):
+    fig, ax = plt.subplots(figsize=(4, 2))
+    ax.plot(df.index, df["Price"], linewidth=1)
+    ax.set_title(f"{symbol}" + (f" (slope={slope:.2f})" if slope else ""), fontsize=9)
+    ax.set_ylabel("Price", fontsize=8)
+    ax.tick_params(axis='x', labelsize=6, rotation=45)
+    ax.tick_params(axis='y', labelsize=7)
+    ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
+    fig.tight_layout()
+    return fig
+
+# ---------- Grouping ----------
+ascending, descending, neutral = [], [], []
 for symbol, df in live_data.items():
     slope = calculate_slope(df)
     if slope is None:
-        neutral.append((symbol, df, None))
-    elif 0.20 <= slope <= 0.80:
+        continue
+    if 0.2 <= slope <= 0.8:
         ascending.append((symbol, df, slope))
-    elif -0.80 <= slope <= -0.20:
+    elif -0.8 <= slope <= -0.2:
         descending.append((symbol, df, slope))
     else:
         neutral.append((symbol, df, slope))
 
-# --- Display Function ---
-def display_group(title, group_data):
-    if not group_data:
+# ---------- Display Charts ----------
+def display_group(title, group):
+    if not group:
         st.warning(f"⚠️ No data available for {title}")
         return
     st.markdown(f"### {title}")
-    for i in range(0, len(group_data), 2):
-        cols = st.columns(2)
-        for j in range(2):
-            if i + j < len(group_data):
-                symbol, df, slope = group_data[i + j]
-                cols[j].pyplot(plot_chart(symbol, df, slope))
+    cols = st.columns(2)
+    for i, (symbol, df, slope) in enumerate(group):
+        with cols[i % 2]:
+            st.pyplot(plot_chart(symbol, df, slope))
 
-# --- Render charts by filter ---
-if group_option == "All":
+# ---------- Render Based on Selection ----------
+if chart_group == "All":
     display_group("📈 Ascending (≈ +45°)", ascending)
     display_group("📉 Descending (≈ -45°)", descending)
-    display_group("➖ Neutral", neutral)
-elif "Ascending" in group_option:
+    display_group("🟣 Neutral", neutral)
+elif chart_group == "Ascending (≈ +45°)":
     display_group("📈 Ascending (≈ +45°)", ascending)
-elif "Descending" in group_option:
+elif chart_group == "Descending (≈ -45°)":
     display_group("📉 Descending (≈ -45°)", descending)
-elif "Neutral" in group_option:
-    display_group("➖ Neutral", neutral)
+elif chart_group == "Neutral":
+    display_group("🟣 Neutral", neutral)
