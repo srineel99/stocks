@@ -12,14 +12,14 @@ now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
 
 # -------------------- Config --------------------
-st.set_page_config(page_title="NSE500 Charts Daily", layout="wide")
+st.set_page_config(page_title="NSE500 Intraday Charts", layout="wide")
 st.title("📊 Intraday Charts — From 9:15 AM IST (Nifty 500)")
-st.markdown(f"📅 **Showing {today_str} Data From 9:15 AM IST**")
+st.markdown(f"📅 **Showing {today_str} Intraday Charts From 9:15 AM IST**")
 
 # -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
-    path = "data/Charts-data/tickers_Nitfy500.txt"  # ✅ Make sure path and spelling are correct
+    path = "data/Charts-data/tickers_Nitfy500.txt"
     if not os.path.exists(path):
         st.error(f"Ticker file not found: {path}")
         return []
@@ -33,32 +33,28 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
 
-# -------------------- Static Settings --------------------
-interval = "5m"  # You can hardcode this or make it selectable from a dropdown if needed
-
 # -------------------- Fetch Function --------------------
 @st.cache_data(ttl=600)
-def fetch_intraday_data(ticker, interval):
+def fetch_intraday_data(ticker):
     try:
-        df = yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
+        df = yf.download(ticker, period="1d", interval="5m", progress=False, auto_adjust=True)
         start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
-        df.index = pd.to_datetime(df.index).tz_localize("UTC").tz_convert("Asia/Kolkata")  # ✅ Correct IST tz
         return df[df.index >= start_time]
     except:
         return pd.DataFrame()
 
-# -------------------- Data Fetch Trigger --------------------
-if st.button(f"📥 Load {interval} Intraday Data"):
+# -------------------- Data Load Button --------------------
+if st.button("📥 Load Today's Intraday Charts"):
     st.session_state.data = {}
     bar = st.progress(0)
     for i, ticker in enumerate(tickers):
-        st.session_state.data[ticker] = fetch_intraday_data(ticker, interval)
+        st.session_state.data[ticker] = fetch_intraday_data(ticker)
         bar.progress((i + 1) / len(tickers))
     st.success("✅ Intraday data downloaded!")
 
 # -------------------- Chart Display --------------------
 if "data" not in st.session_state or not st.session_state.data:
-    st.info("📌 Click the button above to load intraday data.")
+    st.info("📌 Click the button above to load today's intraday charts.")
 else:
     empty = True
     for i in range(0, len(tickers), 2):
@@ -77,8 +73,8 @@ else:
             ax.plot(df.index, df["Close"], lw=1)
             ax.set_title(symbol, fontsize=11)
             ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))  # ✅ 15-min interval
-            ax.xaxis.set_major_formatter(DateFormatter("%H:%M", tz=IST))  # ✅ IST label on x-axis
+            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
             plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
             plt.tight_layout()
             cols[j].pyplot(fig)
