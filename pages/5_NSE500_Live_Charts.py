@@ -3,118 +3,109 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter, MinuteLocator
-import numpy as np
 from datetime import datetime, timedelta, timezone
+import numpy as np
 import os
 
-# --- Timezone & Config ---
+# --- Timezone for IST ---
 IST = timezone(timedelta(hours=5, minutes=30))
-TODAY = datetime.now(IST).date()
+
+def get_today():
+    return datetime.now(IST).date().isoformat()
+
+TODAY = get_today()
 
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
-st.markdown("## 📈 NSE500 Live Charts")
-st.markdown(f"📅 **Showing:** `{TODAY}`")
-st.info("🔄 Refresh the page to load latest data.")
+st.title("📈 NSE500 Live Charts")
+st.markdown(f"""
+### 📅 Showing: `{TODAY}`
+
+🔄 Refresh the page to load latest data.
+""")
+
+# --- Sidebar chart group filter ---
+st.sidebar.markdown("### 📁 Show Chart Group")
+selected_group = st.sidebar.radio("Filter charts by trend", ["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"])
 
 # --- Load tickers ---
-ticker_path = "data/Charts-data/tickers_Nifty500.txt"
-with open(ticker_path, "r") as f:
-    tickers = sorted([line.strip() for line in f if line.strip()])
+ticker_file = "data/Charts-data/tickers_Nifty500.txt"
+with open(ticker_file) as f:
+    tickers = [line.strip() for line in f if line.strip()]
 
-st.markdown(f"📌 **Total Tickers Loaded:** `{len(tickers)}`")
-
-# --- Sidebar filter ---
-st.sidebar.markdown("### 🗂️ Show Chart Group")
-chart_group = st.sidebar.radio("Filter charts by trend", options=["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"])
-
-# --- Cache: Intraday Data Downloader ---
-@st.cache_data(ttl=60 * 30)
-def download_intraday(symbol):
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_intraday_data(symbol):
     try:
-        df = yf.download(
-            tickers=symbol,
-            interval="1m",
-            period="1d",
-            progress=False,
-            threads=True,
-        )
-        if df.empty or "Close" not in df.columns:
-            return None
-
-        df = df.tz_localize("UTC").tz_convert("Asia/Kolkata")
-        df = df[df.index.time >= datetime.strptime("09:00", "%H:%M").time()]
-        df = df[["Close"]].rename(columns={"Close": "Price"})
+        df = yf.download(symbol, period="1d", interval="5m", progress=False)
+        df = df.between_time("09:00", "15:30")
+        df = df.reset_index()
+        df = df.rename(columns={"Datetime": "Time", "Close": "Price"})
+        df = df[["Time", "Price"]].dropna()
         return df
     except:
         return None
 
-# --- Slope Calculation ---
+# --- Calculate slope ---
 def calculate_slope(df):
     y = df["Price"].values
     x = np.arange(len(y))
-    if len(x) < 2:
+    if len(x) < 5 or np.std(y) == 0:
         return None
-    slope, _ = np.polyfit(x, y, 1)
-    return slope
+    try:
+        slope, _ = np.polyfit(x, y, 1)
+        return slope
+    except Exception:
+        return None
 
-# --- Chart Plotter ---
-def plot_chart(symbol, df, slope=None):
+# --- Plot chart ---
+def plot_chart(symbol, df, slope):
     fig, ax = plt.subplots(figsize=(4, 2))
-    ax.plot(df.index, df["Price"], linewidth=1)
-    if slope is not None and not np.isnan(slope):
-        ax.set_title(f"{symbol} (slope={slope:.2f})", fontsize=9)
-    else:
-        ax.set_title(f"{symbol}", fontsize=9)
-    ax.set_ylabel("Price", fontsize=8)
-    ax.tick_params(axis="x", labelsize=6, rotation=45)
-    ax.tick_params(axis="y", labelsize=7)
-    ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+    ax.plot(df["Time"], df["Price"], linewidth=1)
+    ax.set_title(f"{symbol}" + (f" (slope={slope:.2f})" if slope is not None else ""), fontsize=9)
+    ax.set_ylabel("Price")
+    ax.xaxis.set_major_locator(MinuteLocator(byminute=range(15, 60, 15)))
     ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
-    fig.tight_layout()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     return fig
 
-# --- Display grouped charts ---
-def display_group(title, group_data):
-    st.markdown(f"### {title}")
-    if not group_data:
+# --- Grouping logic ---
+ascending, descending, neutral = [], [], []
+all_loaded = []
+
+for symbol in tickers:
+    df = fetch_intraday_data(symbol)
+    if df is not None and len(df) > 5:
+        slope = calculate_slope(df)
+        if slope is not None:
+            all_loaded.append((symbol, df, slope))
+            if 0.40 <= slope <= 0.60:
+                ascending.append((symbol, df, slope))
+            elif -0.60 <= slope <= -0.40:
+                descending.append((symbol, df, slope))
+            else:
+                neutral.append((symbol, df, slope))
+
+st.success(f"📌 Total Tickers Loaded: `{len(all_loaded)}`")
+
+# --- Display Group ---
+def display_group(title, data):
+    if not data:
         st.warning(f"No data available for {title}")
         return
+    st.subheader(title)
     cols = st.columns(2)
-    for i, (symbol, df, slope) in enumerate(group_data):
+    for i, (symbol, df, slope) in enumerate(data):
         with cols[i % 2]:
             st.pyplot(plot_chart(symbol, df, slope))
 
-# --- Main Data Loading ---
-ascending = []
-descending = []
-neutral = []
-all_loaded = []
-
-with st.spinner("📡 Downloading live intraday data..."):
-    for symbol in tickers:
-        df = download_intraday(symbol)
-        if df is None or df.empty:
-            continue
-        slope = calculate_slope(df)
-        all_loaded.append((symbol, df, slope))
-
-        if slope is None or np.isnan(slope):
-            neutral.append((symbol, df, slope))
-        elif 0.3 <= slope <= 1.5:
-            ascending.append((symbol, df, slope))
-        elif -1.5 <= slope <= -0.3:
-            descending.append((symbol, df, slope))
-        else:
-            neutral.append((symbol, df, slope))
-
-# --- Chart Display Based on Sidebar Filter ---
-if chart_group == "All":
-    display_group("📈 Ascending (≈ +45°)", ascending)
-    display_group("📉 Descending (≈ -45°)", descending)
-    display_group("📊 Neutral", neutral)
-elif chart_group == "Ascending (≈ +45°)":
-    display_group("📈 Ascending (≈ +45°)", ascending)
-elif chart_group == "Descending (≈ -45°)":
-    display_group("📉 Descending (≈ -45°)", descending)
-elif chart_group == "Neutral":
-    display_group("📊 Neutral", neutral)
+# --- Display based on selection ---
+if selected_group == "All":
+    display_group("\U0001F4C8 Ascending (≈ +45°)", ascending)
+    display_group("\U0001F4C9 Descending (≈ -45°)", descending)
+    display_group("\U0001F4CA Neutral", neutral)
+elif selected_group.startswith("Ascending"):
+    display_group("\U0001F4C8 Ascending (≈ +45°)", ascending)
+elif selected_group.startswith("Descending"):
+    display_group("\U0001F4C9 Descending (≈ -45°)", descending)
+else:
+    display_group("\U0001F4CA Neutral", neutral)
