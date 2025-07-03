@@ -4,22 +4,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
-from sklearn.linear_model import LinearRegression
+import os
+import random
 import numpy as np
-import os, random
+from scipy.stats import linregress
 
-# --- Timezone setup for IST ---
+# --- IST Timezone setup ---
 IST = timezone(timedelta(hours=5, minutes=30))
 now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
 
-# --- Streamlit Config ---
+# --- Page config ---
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
 st.title("📡 NSE500 Live Charts (Intraday)")
-st.markdown(f"📅 Showing: **{today_str}** (Live data from 9:00 AM IST)")
-st.markdown("🔄 **Refresh the page** to load latest data.")
+st.markdown(f"📅 Showing **{today_str}** data — Starting from first available tick after 9:00 AM IST")
 
-# --- Load tickers ---
+# --- Load tickers from file ---
 @st.cache_data
 def load_tickers():
     path = "data/Charts-data/tickers_Nifty500.txt"
@@ -27,90 +27,138 @@ def load_tickers():
         st.error(f"Ticker file not found: {path}")
         return []
     with open(path) as f:
-        return [line.strip().upper() + ".NS" if not line.strip().upper().endswith(".NS") else line.strip().upper()
-                for line in f if line.strip()]
+        return [
+            line.strip().upper() if line.strip().upper().endswith(".NS")
+            else line.strip().upper() + ".NS"
+            for line in f if line.strip()
+        ]
 
 tickers = load_tickers()
-st.markdown(f"📈 **Total Tickers Loaded:** {len(tickers)}")
+if not tickers:
+    st.error("No tickers loaded. Check your ticker file.")
+    st.stop()
+
+st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 
 # --- Download intraday data ---
-@st.cache_data(ttl=600)
-def fetch_intraday(ticker):
+def fetch_intraday_data(ticker):
     try:
         df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
-        if df.empty or "Close" not in df.columns:
-            return pd.DataFrame()
-        df = df[["Close"]].dropna()
-        df.index = df.index.tz_convert(IST).tz_localize(None)
+        if df.empty:
+            return None
+        df = df.tz_convert(IST).tz_localize(None)
         df = df[df.index >= datetime.combine(now_ist.date(), datetime.strptime("09:00", "%H:%M").time())]
         return df
-    except:
-        return pd.DataFrame()
-
-# --- Angle calculation using LinearRegression ---
-def calculate_angle(df):
-    try:
-        df = df[["Close"]].dropna()
-        y = df["Close"].values
-        x = np.arange(len(y)).reshape(-1, 1)
-        y = y.reshape(-1, 1)
-        model = LinearRegression().fit(x, y)
-        slope = model.coef_[0][0]
-        angle = np.degrees(np.arctan(slope))
-        return angle
-    except:
+    except Exception as e:
+        st.warning(f"Failed to fetch {ticker}: {str(e)}")
         return None
 
-# --- Download all ticker data and classify ---
-if "intraday_data" not in st.session_state:
+# --- Angle Calculation ---
+def calculate_angle(df):
+    if len(df) < 2:
+        return 0
+    x = np.arange(len(df))
+    y = df['Close'].values
+    slope, _, _, _, _ = linregress(x, y)
+    return np.degrees(np.arctan(slope))
+
+# --- Main App ---
+if 'data_loaded' not in st.session_state:
+    # Initial load
     st.session_state.intraday_data = {}
-    st.info("📥 Downloading intraday data...")
-    bar = st.progress(0)
-    for i, ticker in enumerate(tickers):
-        df = fetch_intraday(ticker)
-        if not df.empty:
-            st.session_state.intraday_data[ticker] = df
-        bar.progress((i + 1) / len(tickers))
-    st.success("✅ All intraday data downloaded!")
+    st.session_state.angles = {}
+    st.session_state.data_loaded = False
 
-# --- Sort tickers by angle ---
-ascending, descending, others = [], [], []
-for symbol, df in st.session_state.intraday_data.items():
-    angle = calculate_angle(df)
-    if angle is None:
-        others.append((symbol, df, None))
-    elif 30 <= angle <= 60:
-        ascending.append((symbol, df, angle))
-    elif -60 <= angle <= -30:
-        descending.append((symbol, df, angle))
-    else:
-        others.append((symbol, df, angle))
+if not st.session_state.data_loaded:
+    with st.status("📥 Downloading live data...", expanded=True) as status:
+        progress_bar = st.progress(0)
+        success_count = 0
+        
+        for i, ticker in enumerate(tickers):
+            df = fetch_intraday_data(ticker)
+            if df is not None:
+                st.session_state.intraday_data[ticker] = df
+                st.session_state.angles[ticker] = calculate_angle(df)
+                success_count += 1
+            progress_bar.progress((i + 1) / len(tickers))
+        
+        if success_count > 0:
+            st.session_state.data_loaded = True
+            status.update(label=f"✅ Downloaded {success_count}/{len(tickers)} tickers", state="complete")
+        else:
+            status.update(label="❌ Failed to download any data", state="error")
+            st.error("No data could be loaded. Please check your internet connection and try again.")
+            st.stop()
 
-# --- Chart rendering ---
-def plot_group(title, group_data):
-    st.subheader(title)
-    for i in range(0, len(group_data), 2):
-        cols = st.columns(2)
-        for j in range(2):
-            if i + j >= len(group_data):
-                break
-            symbol, df, angle = group_data[i + j]
+# --- Filter UI ---
+st.sidebar.header("Chart Filters")
+filter_option = st.sidebar.selectbox(
+    "Trend Angle:",
+    ["All", "Strong Up (45°+)", "Moderate Up (15-45°)", 
+     "Moderate Down (-15-45°)", "Strong Down (-45°-)", 
+     "Flat (-15° to 15°)"]
+)
+
+# --- Filter Logic ---
+def filter_charts():
+    filtered = []
+    for ticker, df in st.session_state.intraday_data.items():
+        angle = st.session_state.angles.get(ticker, 0)
+        
+        if filter_option == "All":
+            filtered.append((ticker, angle))
+        elif filter_option == "Strong Up (45°+)" and angle >= 45:
+            filtered.append((ticker, angle))
+        elif filter_option == "Moderate Up (15-45°)" and 15 <= angle < 45:
+            filtered.append((ticker, angle))
+        elif filter_option == "Moderate Down (-15-45°)" and -45 < angle <= -15:
+            filtered.append((ticker, angle))
+        elif filter_option == "Strong Down (-45°-)" and angle <= -45:
+            filtered.append((ticker, angle))
+        elif filter_option == "Flat (-15° to 15°)" and -15 < angle < 15:
+            filtered.append((ticker, angle))
+    
+    # Sort by absolute angle (strongest trends first)
+    filtered.sort(key=lambda x: abs(x[1]), reverse=True)
+    return filtered
+
+# --- Display Charts ---
+filtered_tickers = filter_charts()
+
+if not filtered_tickers:
+    st.warning("No charts match the current filter")
+else:
+    st.success(f"Showing {len(filtered_tickers)} charts")
+    
+    cols = st.columns(2)
+    for i, (ticker, angle) in enumerate(filtered_tickers):
+        df = st.session_state.intraday_data[ticker]
+        
+        with cols[i % 2]:
             fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df.index, df["Close"], lw=1.2)
-            angle_label = f"{angle:.1f}°" if angle is not None and np.isfinite(angle) else "N/A"
-            ax.set_title(f"{symbol} (angle={angle_label})", fontsize=10)
-            ax.set_ylabel("Price", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+            ax.plot(df.index, df["Close"], color='steelblue', linewidth=1.5)
+            
+            # Enhanced title with angle indicator
+            angle_icon = ""
+            if angle >= 45: angle_icon = "↗↗"
+            elif angle >= 15: angle_icon = "↗"
+            elif angle <= -45: angle_icon = "↘↘"
+            elif angle <= -15: angle_icon = "↘"
+            
+            ax.set_title(f"{ticker} {angle_icon} ({angle:.1f}°)", 
+                        fontsize=10, pad=10, color='navy')
+            ax.set_ylabel("Price", fontsize=8)
+            
+            # Format x-axis
+            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 30)))
             ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
+            plt.xticks(rotation=45, ha='right', fontsize=7)
+            
             plt.tight_layout()
-            cols[j].pyplot(fig)
+            st.pyplot(fig)
             plt.close(fig)
 
-# --- Final Display ---
-if st.session_state.intraday_data:
-    plot_group("📈 Ascending Charts (≈ +45°)", ascending)
-    plot_group("📉 Descending Charts (≈ -45°)", descending)
-    plot_group("➡️ Other Charts", others)
-else:
-    st.warning("⚠️ No intraday data found.")
+# Refresh button
+if st.sidebar.button("🔄 Refresh Data"):
+    st.session_state.clear()
+    st.rerun()
