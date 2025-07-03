@@ -19,7 +19,7 @@ st.markdown(f"📅 **Showing {today_str} Data From 9:15 AM IST**")
 # -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
-    path = "data/Charts-data/tickers_Nifty500.txt"  # ✅ make sure typo is fixed
+    path = "data/Charts-data/tickers_Nitfy500.txt"  # ✅ make sure typo is fixed
     if not os.path.exists(path):
         st.error(f"Ticker file not found: {path}")
         return []
