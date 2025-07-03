@@ -1,117 +1,114 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.dates import DateFormatter, HourLocator
-from datetime import datetime, timedelta, timezone
-import os
-import random
+from matplotlib.dates import DateFormatter, MinuteLocator
+import pandas as pd
 import numpy as np
+import os
+from datetime import datetime, timezone, timedelta
 
-# --- Config & Constants ---
+# --- Settings ---
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
-st.title("📈 NSE500 Live Charts")
+st.markdown("<h1 style='font-size: 36px;'>📈 NSE500 Live Charts</h1>", unsafe_allow_html=True)
 
+# --- Timezone Setup ---
 IST = timezone(timedelta(hours=5, minutes=30))
-TODAY = datetime.now(IST).date()
-st.markdown(f"📅 **Showing:** {TODAY}")
-st.info("🔄 Refresh the page to load latest data.")
-
-TICKER_FILE = "data/Charts-data/tickers_Nifty500.txt"
-
-# --- Sidebar Filter ---
-st.sidebar.divider()
-chart_group = st.sidebar.radio(
-    "🗂️ Show Chart Group",
-    ["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"],
-    index=0
-)
+today = datetime.now(IST).date()
 
 # --- Load Tickers ---
-@st.cache_data(ttl=600)
-def load_tickers():
-    with open(TICKER_FILE, "r") as f:
-        return [line.strip() for line in f if line.strip()]
+TICKER_FILE = "data/Charts-data/tickers_Nifty500.txt"
+with open(TICKER_FILE) as f:
+    tickers = [line.strip() for line in f if line.strip()]
+st.markdown(f"📅 <b>Showing:</b> {today}", unsafe_allow_html=True)
+st.markdown("🔄 Refresh the page to load latest data.")
+st.markdown(f"📌 <b>Total Tickers Loaded:</b> <code>{len(tickers)}</code>", unsafe_allow_html=True)
 
-tickers = load_tickers()
-st.markdown(f"📌 **Total Tickers Loaded:** `{len(tickers)}`")
+# --- Sidebar: Filter Group ---
+st.sidebar.markdown("📂 **Show Chart Group**")
+chart_group = st.sidebar.radio(
+    "", ["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"],
+    index=0,
+)
 
-# --- Download & Cache Intraday Data ---
-@st.cache_data(ttl=600)
-def fetch_intraday_data(ticker):
+# --- Data Caching ---
+@st.cache_data(ttl=300)
+def fetch_intraday_data(ticker: str):
     try:
-        df = yf.download(ticker, interval="5m", period="1d", progress=False)
-        if df.empty or "Close" not in df.columns:
+        df = yf.download(ticker, interval="1m", period="1d", progress=False)
+        if df.empty or "Close" not in df:
             return None
-        df = df.tz_convert("Asia/Kolkata")
-        df = df[df.index.time >= datetime.strptime("09:15", "%H:%M").time()]
+        df = df.tz_localize(None)  # remove timezone
+        df = df[df.index.time >= datetime.strptime("09:00", "%H:%M").time()]  # start from 9:00 AM
+        df = df[['Close']].copy()
+        df.reset_index(inplace=True)
         return df
     except Exception:
         return None
 
-# --- Calculate Slope ---
-def compute_slope(df):
+# --- Compute Slope of Trend Line ---
+def compute_slope(df: pd.DataFrame):
     try:
+        x = np.arange(len(df))
         y = df["Close"].values
-        x = np.arange(len(y))
-        slope = np.polyfit(x, y, 1)[0]
+        if len(x) < 2:
+            return None
+        slope, _ = np.polyfit(x, y, 1)
         return slope
     except Exception:
         return None
 
-# --- Plot Chart ---
-def plot_chart(symbol, df, slope=None):
-    fig, ax = plt.subplots(figsize=(4, 2))
-    ax.plot(df.index, df["Close"], linewidth=1.5)
-    title = f"{symbol}"
-    if isinstance(slope, (int, float)):
-        title += f" (slope={slope:.2f})"
-    ax.set_title(title, fontsize=9)
-    ax.set_ylabel("Price", fontsize=7)
-    ax.tick_params(axis="x", labelsize=6)
-    ax.tick_params(axis="y", labelsize=6)
-    ax.xaxis.set_major_locator(HourLocator(interval=1))
-    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-    fig.autofmt_xdate()
+# --- Chart Plotting ---
+def plot_chart(symbol: str, df: pd.DataFrame, slope=None):
+    fig, ax = plt.subplots(figsize=(5, 2))
+    ax.plot(df["Datetime"], df["Close"])
+    ax.set_title(f"{symbol}" + (f" (slope={slope:.2f})" if slope is not None else ""), fontsize=9)
+    ax.set_ylabel("Price")
+    ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+    ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
+    plt.xticks(rotation=45)
     plt.tight_layout()
     return fig
 
-# --- Display Charts by Group ---
-def display_group(label, group_data):
-    st.subheader(label)
-    if not group_data:
+# --- Group Charts by Slope ---
+def display_group(label: str, data: list):
+    if not data:
         st.warning(f"⚠️ No data available for {label}")
         return
+    st.markdown(f"### {label}")
     cols = st.columns(2)
-    for i, (symbol, df, slope) in enumerate(group_data):
-        with cols[i % 2]:
+    for idx, (symbol, df, slope) in enumerate(data):
+        with cols[idx % 2]:
             st.pyplot(plot_chart(symbol, df, slope))
 
-# --- Main Logic ---
-ascending, descending, neutral = [], [], []
-for ticker in tickers:
-    df = fetch_intraday_data(ticker)
-    if df is None or df.empty:
-        continue
-    slope = compute_slope(df)
-    if slope is not None:
-        if 0.2 < slope < 2:
-            ascending.append((ticker, df, slope))
-        elif -2 < slope < -0.2:
-            descending.append((ticker, df, slope))
+# --- Download & Process ---
+with st.spinner("📡 Fetching live intraday data..."):
+    ascending, descending, neutral = [], [], []
+    for ticker in tickers:
+        df = fetch_intraday_data(ticker)
+        if df is None or df.empty:
+            continue
+        slope = compute_slope(df)
+        if slope is not None:
+            if 0.2 < slope < 2:
+                ascending.append((ticker, df, slope))
+            elif -2 < slope < -0.2:
+                descending.append((ticker, df, slope))
+            else:
+                neutral.append((ticker, df, slope))
         else:
-            neutral.append((ticker, df, slope))
-    else:
-        neutral.append((ticker, df, None))
+            neutral.append((ticker, df, None))
 
 # --- Filter & Display ---
-if chart_group == "Ascending (≈ +45°)":
-    display_group("📈 Ascending (≈ +45°)", ascending)
-elif chart_group == "Descending (≈ -45°)":
-    display_group("📉 Descending (≈ -45°)", descending)
-elif chart_group == "Neutral":
-    display_group("➖ Neutral", neutral)
+if not any([ascending, descending, neutral]):
+    st.warning("⚠️ No intraday chart data available yet. Try refreshing the page after a few minutes.")
 else:
-    display_group("📈 Ascending (≈ +45°)", ascending)
-    display_group("📉 Descending (≈ -45°)", descending)
-    display_group("➖ Neutral", neutral)
+    if chart_group == "Ascending (≈ +45°)":
+        display_group("📈 Ascending (≈ +45°)", ascending)
+    elif chart_group == "Descending (≈ -45°)":
+        display_group("📉 Descending (≈ -45°)", descending)
+    elif chart_group == "Neutral":
+        display_group("➖ Neutral", neutral)
+    else:
+        display_group("📈 Ascending (≈ +45°)", ascending)
+        display_group("📉 Descending (≈ -45°)", descending)
+        display_group("➖ Neutral", neutral)
