@@ -4,9 +4,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
-from sklearn.linear_model import LinearRegression
 import numpy as np
 import os
+from sklearn.linear_model import LinearRegression
 import random
 
 # --- IST Timezone setup ---
@@ -17,7 +17,8 @@ today_str = now_ist.date().isoformat()
 # --- Page config ---
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
 st.title("📡 NSE500 Live Charts (Intraday)")
-st.markdown(f"📅 Showing **{today_str}** data — From 9:00 AM IST onwards")
+st.markdown(f"📅 Showing **{today_str}** data — Starting from first available tick after 9:00 AM IST")
+st.markdown("🔁 Refresh the page to reload latest data.")
 
 # --- Load tickers from file ---
 @st.cache_data
@@ -36,20 +37,22 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 
-# --- Fetch intraday data ---
+# --- Download intraday data (cached) ---
 @st.cache_data(ttl=600)
 def fetch_intraday(ticker):
     try:
         df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
+        if df.empty or "Close" not in df.columns:
+            return pd.DataFrame()
         df = df.tz_convert(IST).tz_localize(None)
         df = df[df.index >= datetime.combine(now_ist.date(), datetime.strptime("09:00", "%H:%M").time())]
         return df
     except:
         return pd.DataFrame()
 
-# --- Calculate slope angle using linear regression ---
+# --- Angle Calculation ---
 def calculate_angle(df):
-    if df is None or df.empty or len(df) < 2:
+    if df is None or df.empty or "Close" not in df.columns or len(df) < 2:
         return None
     df = df.dropna(subset=["Close"])
     if df.empty:
@@ -66,7 +69,7 @@ def calculate_angle(df):
     except:
         return None
 
-# --- Trigger data download ---
+# --- Download Trigger ---
 if "intraday_data" not in st.session_state:
     st.info("📥 Fetching live intraday data (1m interval)...")
     st.session_state.intraday_data = []
@@ -74,41 +77,25 @@ if "intraday_data" not in st.session_state:
     random.shuffle(tickers)
     for i, ticker in enumerate(tickers):
         df = fetch_intraday(ticker)
-        if not df.empty:
+        if not df.empty and "Close" in df.columns:
             angle = calculate_angle(df)
             st.session_state.intraday_data.append((ticker, df, angle))
         bar.progress((i + 1) / len(tickers))
-    st.success("✅ Data loaded.")
+    st.success("✅ Live intraday data loaded!")
 
-# --- Group based on angle ---
-ascending = []
-descending = []
-flat = []
-
-for symbol, df, angle in st.session_state.intraday_data:
-    if angle is None:
-        flat.append((symbol, df, angle))
-    elif 35 <= angle <= 55:
-        ascending.append((symbol, df, angle))
-    elif -55 <= angle <= -35:
-        descending.append((symbol, df, angle))
-    else:
-        flat.append((symbol, df, angle))
-
-# --- Plotting function ---
-def plot_group(title, group):
-    if not group:
-        return
+# --- Chart Plot Function ---
+def plot_group(title, data_group, angle_filter=None):
     st.subheader(title)
-    for i in range(0, len(group), 2):
+    count = 0
+    for i in range(0, len(data_group), 2):
         cols = st.columns(2)
         for j in range(2):
-            if i + j >= len(group):
+            if i + j >= len(data_group):
                 break
-            symbol, df, angle = group[i + j]
+            symbol, df, angle = data_group[i + j]
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.plot(df.index, df["Close"], lw=1.2)
-            angle_label = f"{angle:.1f}°" if isinstance(angle, (int, float)) and np.isfinite(angle) else "N/A"
+            angle_label = f"{angle:.1f}°" if angle is not None and np.isfinite(angle) else "N/A"
             ax.set_title(f"{symbol} (angle={angle_label})", fontsize=10)
             ax.set_ylabel("Price", fontsize=9)
             ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
@@ -117,11 +104,27 @@ def plot_group(title, group):
             plt.tight_layout()
             cols[j].pyplot(fig)
             plt.close(fig)
+            count += 1
+    if count == 0:
+        st.warning("⚠️ No charts in this category.")
 
-# --- Display Groups ---
+# --- Group charts by angle ---
 if st.session_state.intraday_data:
+    ascending = []
+    descending = []
+    flat = []
+    for sym, df, angle in st.session_state.intraday_data:
+        if angle is None:
+            flat.append((sym, df, angle))
+        elif 40 <= angle <= 50:
+            ascending.append((sym, df, angle))
+        elif -50 <= angle <= -40:
+            descending.append((sym, df, angle))
+        else:
+            flat.append((sym, df, angle))
+
     plot_group("📈 Ascending Charts (≈ +45°)", ascending)
     plot_group("📉 Descending Charts (≈ -45°)", descending)
-    plot_group("➡️ Flat/Other Charts", flat)
+    plot_group("🟰 Flat/Other Charts", flat)
 else:
-    st.warning("⚠️ No valid data available.")
+    st.warning("⚠️ No data available. Try refreshing the page.")
