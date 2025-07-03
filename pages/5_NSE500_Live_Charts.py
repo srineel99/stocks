@@ -105,7 +105,9 @@ def plot_group(title, group):
             symbol, df, angle = group[i + j]
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.plot(df.index, df["Close"], lw=1.2)
-            ax.set_title(f"{symbol} (angle={angle:.1f}°)", fontsize=10)
+
+            angle_label = f"{angle:.1f}°" if angle is not None else "N/A"
+            ax.set_title(f"{symbol} (angle={angle_label})", fontsize=10)
             ax.set_ylabel("Price", fontsize=9)
             ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
             ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
