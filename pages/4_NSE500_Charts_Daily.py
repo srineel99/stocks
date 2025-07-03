@@ -3,6 +3,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+import matplotlib.dates as mdates
 import os
 
 # -------------------- Timezone Setup --------------------
@@ -15,8 +16,8 @@ def get_cache_date() -> str:
 CACHE_DATE = get_cache_date()
 
 # -------------------- Page Setup --------------------
-st.set_page_config(page_title="Today's Charts (Intraday)", layout="wide")
-st.title("📊 Intraday Charts — Today (Nifty 500)")
+st.set_page_config(page_title="Today's Intraday Charts", layout="wide")
+st.title("📊 Intraday Charts — From 9:15 AM (Nifty 500)")
 
 # -------------------- Sidebar Filters --------------------
 st.sidebar.header("🔍 Filter Stocks")
@@ -46,7 +47,12 @@ selected_range = st.sidebar.slider("Latest Price Range (Today)", min_value=price
 # -------------------- Data Fetching --------------------
 @st.cache_data(ttl=900)  # 15 minutes
 def download_data(ticker: str, interval: str) -> pd.DataFrame:
-    return yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
+    df = yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
+    if df.empty:
+        return df
+    df.index = df.index.tz_localize(None)
+    df = df[df.index >= datetime.combine(datetime.now().date(), datetime.strptime("09:15", "%H:%M").time())]
+    return df
 
 @st.cache_data(ttl=86400)
 def get_company_name(ticker: str) -> str:
@@ -56,8 +62,9 @@ def get_company_name(ticker: str) -> str:
     except Exception:
         return ticker
 
+# -------------------- Display Info --------------------
 st.markdown(f"**🧾 Total Tickers:** {len(tickers)}")
-st.markdown(f"**📅 Showing Intraday Data ({interval} Interval) — {CACHE_DATE}**")
+st.markdown(f"**📅 Showing {interval} Data Since 9:15 AM — {CACHE_DATE}**")
 
 # -------------------- Download Button --------------------
 download_label = f"📥 Download Today’s {interval} Intraday Data for All Tickers"
@@ -108,7 +115,13 @@ else:
             ax.set_title(f"{symbol} — {name}", fontsize=11)
             ax.set_ylabel("Price", fontsize=9)
             ax.set_xlabel("Time", fontsize=8)
+
+            # Format time axis
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+            interval_minutes = int(interval.replace("m", ""))
+            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=interval_minutes))
             ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+
             ax.grid(True, linestyle="--", alpha=0.5)
             plt.tight_layout()
             cols[col_i].pyplot(fig)
