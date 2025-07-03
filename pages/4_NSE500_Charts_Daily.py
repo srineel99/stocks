@@ -6,53 +6,56 @@ from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, time, timedelta, timezone
 import os
 
-# -------------------- IST TIMEZONE SETUP --------------------
+# -------------------- Timezone Setup (IST) --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 now_ist = datetime.now(IST)
-today_date_str = now_ist.date().isoformat()
+today_str = now_ist.date().isoformat()
 
-# -------------------- CONFIGURATION --------------------
+# -------------------- Config --------------------
 st.set_page_config(page_title="NSE500 Charts Daily", layout="wide")
-st.title("📊 Intraday Charts — From 9:15 AM IST (Sample NSE Stocks)")
-st.markdown(f"📅 **Showing 5m Data Since 9:15 AM IST — `{today_date_str}`**")
+st.title("📊 Intraday Charts — From 9:15 AM IST (Nifty 500)")
+st.markdown(f"📅 **Showing {today_str} Data From 9:15 AM IST**")
 
-# -------------------- SAMPLE TICKERS (Replace with actual NSE500 list) --------------------
-tickers = ["TATAMOTORS.NS", "RELIANCE.NS"]
+# -------------------- Load Tickers --------------------
+@st.cache_data
+def load_tickers():
+    path = "data/Charts-data/tickers_Nifty500.txt"
+    if not os.path.exists(path):
+        st.error(f"Ticker file not found: {path}")
+        return []
+    with open(path) as f:
+        return [line.strip().upper() + ".NS" for line in f if line.strip()]
+
+tickers = load_tickers()
 st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
 
-# -------------------- SIDEBAR OPTIONS --------------------
+# -------------------- Sidebar Filters --------------------
 st.sidebar.header("🔍 Options")
 interval = st.sidebar.selectbox("Select Interval", ["1m", "2m", "5m", "10m", "15m"], index=2)
 show_all = st.sidebar.checkbox("✅ Show All Charts", value=True)
 
-# -------------------- DOWNLOAD DATA --------------------
+# -------------------- Fetch Function --------------------
 @st.cache_data(ttl=600)
-def fetch_data(symbol: str, interval: str) -> pd.DataFrame:
+def fetch_intraday_data(ticker, interval):
     try:
-        df = yf.download(
-            symbol, 
-            period="1d", 
-            interval=interval, 
-            progress=False, 
-            auto_adjust=True, 
-            prepost=False
-        )
-        df = df[df.index >= datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)]
-        return df
-    except Exception:
+        df = yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
+        start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
+        return df[df.index >= start_time]
+    except:
         return pd.DataFrame()
 
+# -------------------- Data Fetch Trigger --------------------
 if st.button(f"📥 Load {interval} Intraday Data"):
     st.session_state.data = {}
     bar = st.progress(0)
-    for i, sym in enumerate(tickers):
-        st.session_state.data[sym] = fetch_data(sym, interval)
+    for i, ticker in enumerate(tickers):
+        st.session_state.data[ticker] = fetch_intraday_data(ticker, interval)
         bar.progress((i + 1) / len(tickers))
-    st.success(f"✅ {interval} intraday data downloaded successfully!")
+    st.success("✅ Intraday data downloaded!")
 
-# -------------------- DISPLAY CHARTS --------------------
+# -------------------- Chart Display --------------------
 if "data" not in st.session_state or not st.session_state.data:
-    st.warning("📌 Click the button above to load intraday data.")
+    st.info("📌 Click the button above to load intraday data.")
 else:
     empty = True
     for i in range(0, len(tickers), 2):
@@ -62,21 +65,21 @@ else:
             if idx >= len(tickers):
                 break
             symbol = tickers[idx]
-            df = st.session_state.data.get(symbol, pd.DataFrame())
+            df = st.session_state.data.get(symbol)
             if df is None or df.empty:
-                cols[j].error(f"No intraday data for {symbol}. Please try after 9:15 AM IST.")
+                cols[j].warning(f"No intraday data for {symbol}")
                 continue
             empty = False
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.plot(df.index, df["Close"], lw=1)
-            ax.set_title(f"{symbol}", fontsize=11)
+            ax.set_title(symbol, fontsize=11)
             ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(interval=5))
+            ax.xaxis.set_major_locator(MinuteLocator(interval=10))  # <-- 10min spacing
             ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
             plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
             plt.tight_layout()
             cols[j].pyplot(fig)
             plt.close(fig)
     if empty:
-        st.warning("⚠️ No data returned for any ticker. Please try after 9:15 AM IST.")
+        st.warning("⚠️ No data returned for any ticker. Try after 9:15 AM IST.")
 
