@@ -4,19 +4,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, time, timedelta, timezone
-import os, time as systime, random
+import os, random, time as systime
 
 # -------------------- Timezone Setup (IST) --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
 
-# -------------------- Page Config --------------------
+# -------------------- Page Setup --------------------
 st.set_page_config(page_title="NSE500 Intraday Charts", layout="wide")
 st.title("📈 Intraday Charts — From 9:15 AM IST (Nifty 500)")
 st.markdown(f"📅 **Showing {today_str} | 5-minute Interval Data**")
 
-# -------------------- Load Tickers --------------------
+# -------------------- Load 100 Random Tickers --------------------
 @st.cache_data
 def load_tickers():
     path = "data/Charts-data/tickers_Nifty500.txt"
@@ -29,7 +29,7 @@ def load_tickers():
             else line.strip().upper() + ".NS"
             for line in f if line.strip()
         ]
-    return random.sample(all_tickers, min(100, len(all_tickers)))  # 🎯 Random 100
+    return random.sample(all_tickers, min(100, len(all_tickers)))
 
 tickers = load_tickers()
 st.markdown(f"📊 **Randomly Selected Tickers:** {len(tickers)}")
@@ -46,7 +46,7 @@ def fetch_intraday_data(ticker):
     except:
         return pd.DataFrame()
 
-# -------------------- Classify Trend --------------------
+# -------------------- Trend Classification --------------------
 def classify_trend(df, threshold=0.05):
     if df is None or df.empty:
         return "flat", 0
@@ -59,20 +59,22 @@ def classify_trend(df, threshold=0.05):
     else:
         return "flat", slope
 
-# -------------------- Fetch and Classify --------------------
-available_data = {"ascending": [], "descending": [], "flat": []}
-progress = st.progress(0, text="⏳ Fetching and classifying 5m intraday data...")
+# -------------------- Download Button --------------------
+if "data" not in st.session_state or st.button("📥 Load Intraday Data"):
+    st.session_state.data = {"ascending": [], "descending": [], "flat": []}
+    bar = st.progress(0, text="⏳ Fetching fresh 5m data...")
 
-for i, ticker in enumerate(tickers):
-    df = fetch_intraday_data(ticker)
-    trend, slope = classify_trend(df)
-    if not df.empty:
-        available_data[trend].append((ticker, df, slope))
-    systime.sleep(0.8)
-    progress.progress((i + 1) / len(tickers))
-progress.empty()
+    for i, ticker in enumerate(tickers):
+        df = fetch_intraday_data(ticker)
+        trend, slope = classify_trend(df)
+        if not df.empty:
+            st.session_state.data[trend].append((ticker, df, slope))
+        systime.sleep(0.8)
+        bar.progress((i + 1) / len(tickers))
+    bar.empty()
+    st.success("✅ Intraday data downloaded and grouped!")
 
-# -------------------- Display Charts --------------------
+# -------------------- Chart Plotting --------------------
 def plot_chart(symbol, df, slope):
     try:
         slope_val = float(slope)
@@ -99,11 +101,10 @@ def display_group(title, group_data):
             symbol, df, slope = group_data[idx]
             cols[j].pyplot(plot_chart(symbol, df, slope))
 
-# -------------------- Show All Groups --------------------
-if not any(available_data.values()):
-    st.warning("⚠️ No intraday data available for any stock. Try again later.")
+# -------------------- Display All Trend Groups --------------------
+if "data" not in st.session_state or not any(st.session_state.data.values()):
+    st.warning("⚠️ No data to display. Click '📥 Load Intraday Data' to start.")
 else:
-    st.success("✅ Charts loaded and sorted by trend.")
-    display_group("📈 Ascending (≈ +45°) Charts", available_data["ascending"])
-    display_group("📉 Descending (≈ -45°) Charts", available_data["descending"])
-    display_group("➡️ Flat/Other Charts", available_data["flat"])
+    display_group("📈 Ascending (≈ +45°) Charts", st.session_state.data["ascending"])
+    display_group("📉 Descending (≈ -45°) Charts", st.session_state.data["descending"])
+    display_group("➡️ Flat/Other Charts", st.session_state.data["flat"])
