@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
+import numpy as np
 import os
 import random
 
@@ -39,18 +40,45 @@ st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 def fetch_intraday(ticker):
     try:
         df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
-        df = df.tz_convert(IST).tz_localize(None)  # Convert to IST and make naive
+        df = df.tz_convert(IST).tz_localize(None)
         df = df[df.index >= datetime.combine(now_ist.date(), datetime.strptime("09:00", "%H:%M").time())]
         return df
     except:
         return pd.DataFrame()
 
-# --- Trigger Download ---
+# --- Classify charts by slope ---
+def classify_charts(data):
+    ascending = []
+    descending = []
+    neutral = []
+
+    for symbol, df in data.items():
+        if len(df) < 10:
+            neutral.append((symbol, df))
+            continue
+
+        try:
+            x = np.arange(len(df))
+            y = df["Close"].values
+            slope, _ = np.polyfit(x, y, 1)
+
+            if 0.4 <= slope <= 1.5:
+                ascending.append((symbol, df))
+            elif -1.5 <= slope <= -0.4:
+                descending.append((symbol, df))
+            else:
+                neutral.append((symbol, df))
+        except:
+            neutral.append((symbol, df))
+
+    return ascending, descending, neutral
+
+# --- Download Data (First Time Only) ---
 if "intraday_data" not in st.session_state:
     st.info("📥 Fetching live intraday data (1m interval)...")
     st.session_state.intraday_data = {}
     bar = st.progress(0)
-    random.shuffle(tickers)  # Shuffle to avoid same order every time
+    random.shuffle(tickers)
     for i, ticker in enumerate(tickers):
         df = fetch_intraday(ticker)
         if not df.empty:
@@ -58,34 +86,37 @@ if "intraday_data" not in st.session_state:
         bar.progress((i + 1) / len(tickers))
     st.success("✅ Live intraday data loaded!")
 
-# --- Plot Charts ---
+# --- Plot charts grouped ---
+def plot_group(title, group_data):
+    if group_data:
+        st.subheader(title)
+        for i in range(0, len(group_data), 2):
+            cols = st.columns(2)
+            for j in range(2):
+                if i + j >= len(group_data): break
+                symbol, df = group_data[i + j]
+
+                fig, ax = plt.subplots(figsize=(6, 3))
+                ax.plot(df.index, df["Close"], lw=1.2)
+                ax.set_title(symbol, fontsize=10)
+                ax.set_ylabel("Price", fontsize=9)
+                ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+                ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+                plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
+                plt.tight_layout()
+                cols[j].pyplot(fig)
+                plt.close(fig)
+    else:
+        st.warning(f"No data in group: {title}")
+
+# --- Final display logic ---
 if st.session_state.intraday_data:
     data = st.session_state.intraday_data
-    count = 0
-    for i in range(0, len(data), 2):
-        cols = st.columns(2)
-        for j in range(2):
-            if i + j >= len(data):
-                break
-            symbol = list(data.keys())[i + j]
-            df = data[symbol]
+    ascending, descending, neutral = classify_charts(data)
 
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df.index, df["Close"], lw=1.2)
-            ax.set_title(symbol, fontsize=10)
-            ax.set_ylabel("Price", fontsize=9)
+    plot_group("📈 Ascending (≈ +45°)", ascending)
+    plot_group("📉 Descending (≈ -45°)", descending)
+    plot_group("➖ Neutral / Flat Charts", neutral)
 
-            # X-axis ticks at 15-minute intervals
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
-            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
-
-            plt.tight_layout()
-            cols[j].pyplot(fig)
-            plt.close(fig)
-            count += 1
-
-    if count == 0:
-        st.warning("⚠️ No valid intraday data returned. Try again later.")
 else:
     st.warning("⚠️ Data not loaded. Please refresh the page.")
