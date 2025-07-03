@@ -33,7 +33,7 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
 
-# -------------------- Fetch Function (No cache) --------------------
+# -------------------- Fetch Function --------------------
 def fetch_intraday_data(ticker):
     try:
         df = yf.download(
@@ -43,12 +43,15 @@ def fetch_intraday_data(ticker):
             progress=False,
             auto_adjust=True
         )
-        start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
-        return df[df.index >= start_time]
+        if df.empty:
+            return df
+        df.index = df.index.tz_localize('UTC').tz_convert(IST)  # ✅ Convert to IST
+        df = df[df.index >= datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)]
+        return df
     except:
         return pd.DataFrame()
 
-# -------------------- Fetch Data Fresh Each Time --------------------
+# -------------------- Fetch & Plot --------------------
 st.info("🔄 Fetching fresh intraday data (5m interval)...")
 data_dict = {}
 bar = st.progress(0)
@@ -76,7 +79,7 @@ for i in range(0, len(tickers), 2):
         ax.plot(df.index, df["Close"], lw=1)
         ax.set_title(symbol, fontsize=11)
         ax.set_ylabel("Close", fontsize=9)
-        ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+        ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))  # ✅ X-axis every 15 min
         ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
         plt.tight_layout()
