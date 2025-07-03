@@ -19,7 +19,7 @@ st.markdown(f"📅 **Showing {today_str} Data From 9:15 AM IST**")
 # -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
-    path = "data/Charts-data/tickers_Nitfy500.txt"  # ✅ make sure typo is fixed
+    path = "data/Charts-data/tickers_Nitfy500.txt"  # ✅ Make sure path and spelling are correct
     if not os.path.exists(path):
         st.error(f"Ticker file not found: {path}")
         return []
@@ -33,10 +33,8 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
 
-# -------------------- Sidebar Filters --------------------
-st.sidebar.header("🔍 Options")
-interval = st.sidebar.selectbox("Select Interval", ["1m", "2m", "5m", "10m", "15m"], index=2)
-show_all = st.sidebar.checkbox("✅ Show All Charts", value=True)
+# -------------------- Static Settings --------------------
+interval = "5m"  # You can hardcode this or make it selectable from a dropdown if needed
 
 # -------------------- Fetch Function --------------------
 @st.cache_data(ttl=600)
@@ -44,9 +42,8 @@ def fetch_intraday_data(ticker, interval):
     try:
         df = yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
         start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
-        df = df[df.index >= start_time]
-        df.index = df.index.tz_convert(IST)  # ✅ convert timestamps to IST
-        return df
+        df.index = pd.to_datetime(df.index).tz_localize("UTC").tz_convert("Asia/Kolkata")  # ✅ Correct IST tz
+        return df[df.index >= start_time]
     except:
         return pd.DataFrame()
 
@@ -80,8 +77,8 @@ else:
             ax.plot(df.index, df["Close"], lw=1)
             ax.set_title(symbol, fontsize=11)
             ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))  # ✅ 15-minute interval
-            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))  # ✅ 15-min interval
+            ax.xaxis.set_major_formatter(DateFormatter("%H:%M", tz=IST))  # ✅ IST label on x-axis
             plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
             plt.tight_layout()
             cols[j].pyplot(fig)
