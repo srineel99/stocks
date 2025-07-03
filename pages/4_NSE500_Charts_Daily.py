@@ -33,51 +33,54 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
 
-# -------------------- Fetch Function --------------------
-@st.cache_data(ttl=600)
+# -------------------- Fetch Function (No cache) --------------------
 def fetch_intraday_data(ticker):
     try:
-        df = yf.download(ticker, period="1d", interval="5m", progress=False, auto_adjust=True)
+        df = yf.download(
+            ticker,
+            period="1d",
+            interval="5m",
+            progress=False,
+            auto_adjust=True
+        )
         start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
         return df[df.index >= start_time]
     except:
         return pd.DataFrame()
 
-# -------------------- Data Load Button --------------------
-if st.button("📥 Load Today's Intraday Charts"):
-    st.session_state.data = {}
-    bar = st.progress(0)
-    for i, ticker in enumerate(tickers):
-        st.session_state.data[ticker] = fetch_intraday_data(ticker)
-        bar.progress((i + 1) / len(tickers))
-    st.success("✅ Intraday data downloaded!")
+# -------------------- Fetch Data Fresh Each Time --------------------
+st.info("🔄 Fetching fresh intraday data (5m interval)...")
+data_dict = {}
+bar = st.progress(0)
+for i, ticker in enumerate(tickers):
+    df = fetch_intraday_data(ticker)
+    data_dict[ticker] = df
+    bar.progress((i + 1) / len(tickers))
+st.success("✅ Live intraday data loaded!")
 
-# -------------------- Chart Display --------------------
-if "data" not in st.session_state or not st.session_state.data:
-    st.info("📌 Click the button above to load today's intraday charts.")
-else:
-    empty = True
-    for i in range(0, len(tickers), 2):
-        cols = st.columns(2)
-        for j in range(2):
-            idx = i + j
-            if idx >= len(tickers):
-                break
-            symbol = tickers[idx]
-            df = st.session_state.data.get(symbol)
-            if df is None or df.empty:
-                cols[j].warning(f"No intraday data for {symbol}")
-                continue
-            empty = False
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df.index, df["Close"], lw=1)
-            ax.set_title(symbol, fontsize=11)
-            ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
-            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
-            plt.tight_layout()
-            cols[j].pyplot(fig)
-            plt.close(fig)
-    if empty:
-        st.warning("⚠️ No data returned for any ticker. Try after 9:15 AM IST.")
+# -------------------- Display Charts --------------------
+empty = True
+for i in range(0, len(tickers), 2):
+    cols = st.columns(2)
+    for j in range(2):
+        idx = i + j
+        if idx >= len(tickers):
+            break
+        symbol = tickers[idx]
+        df = data_dict.get(symbol)
+        if df is None or df.empty:
+            cols[j].warning(f"No intraday data for {symbol}")
+            continue
+        empty = False
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.plot(df.index, df["Close"], lw=1)
+        ax.set_title(symbol, fontsize=11)
+        ax.set_ylabel("Close", fontsize=9)
+        ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+        ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
+        plt.tight_layout()
+        cols[j].pyplot(fig)
+        plt.close(fig)
+if empty:
+    st.warning("⚠️ No data returned for any ticker. Try after 9:15 AM IST.")
