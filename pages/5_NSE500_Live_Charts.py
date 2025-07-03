@@ -6,9 +6,10 @@ import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
 from sklearn.linear_model import LinearRegression
-import os, random
+import os
+import random
 
-# --- IST Timezone setup ---
+# --- Timezone setup ---
 IST = timezone(timedelta(hours=5, minutes=30))
 now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
@@ -35,7 +36,7 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 
-# --- Download intraday data (cached) ---
+# --- Download intraday data ---
 @st.cache_data(ttl=600)
 def fetch_intraday(ticker):
     try:
@@ -46,45 +47,61 @@ def fetch_intraday(ticker):
     except:
         return pd.DataFrame()
 
-# --- Angle-based trend detection ---
-def get_trend_angle(df):
+# --- Slope classification using linear regression ---
+def get_angle(df):
     try:
-        y = df["Close"].values.reshape(-1, 1)
+        if df is None or df.empty or len(df) < 10:
+            return None
+        y = df["Close"].values
         x = np.arange(len(y)).reshape(-1, 1)
         model = LinearRegression().fit(x, y)
-        slope = model.coef_[0][0]
-        angle_deg = np.degrees(np.arctan(slope))
+        slope = model.coef_[0]
+        angle_rad = np.arctan(slope)
+        angle_deg = np.degrees(angle_rad)
         return angle_deg
     except:
         return None
 
-# --- Trigger Download ---
+# --- Trigger Download and Classification ---
 if "intraday_data" not in st.session_state:
-    st.info("📥 Fetching live intraday data (1m interval)...")
-    st.session_state.intraday_data = {"ascending": [], "descending": [], "flat": []}
+    st.info("📥 Fetching intraday data (1m)...")
+    st.session_state.intraday_data = {}
     bar = st.progress(0)
     random.shuffle(tickers)
     for i, ticker in enumerate(tickers):
         df = fetch_intraday(ticker)
         if not df.empty:
-            angle = get_trend_angle(df)
-            if angle is not None:
-                if 40 <= angle <= 50:
-                    st.session_state.intraday_data["ascending"].append((ticker, df, angle))
-                elif -50 <= angle <= -40:
-                    st.session_state.intraday_data["descending"].append((ticker, df, angle))
-                else:
-                    st.session_state.intraday_data["flat"].append((ticker, df, angle))
+            st.session_state.intraday_data[ticker] = df
         bar.progress((i + 1) / len(tickers))
-    st.success("✅ Live intraday data loaded and classified!")
+    st.success("✅ Live intraday data loaded!")
+
+# --- Group by angle ---
+ascending = []
+descending = []
+others = []
+
+if st.session_state.intraday_data:
+    for symbol, df in st.session_state.intraday_data.items():
+        angle = get_angle(df)
+        if angle is None:
+            continue
+        if 40 <= angle <= 50:
+            ascending.append((symbol, df, angle))
+        elif -50 <= angle <= -40:
+            descending.append((symbol, df, angle))
+        else:
+            others.append((symbol, df, angle))
 
 # --- Plot grouped charts ---
 def plot_group(title, group):
+    if not group:
+        return
     st.subheader(title)
     for i in range(0, len(group), 2):
         cols = st.columns(2)
         for j in range(2):
-            if i + j >= len(group): break
+            if i + j >= len(group):
+                break
             symbol, df, angle = group[i + j]
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.plot(df.index, df["Close"], lw=1.2)
@@ -97,14 +114,10 @@ def plot_group(title, group):
             cols[j].pyplot(fig)
             plt.close(fig)
 
-# --- Display all charts ---
-if st.session_state.intraday_data:
-    data = st.session_state.intraday_data
-    if data["ascending"]:
-        plot_group("📈 Ascending (≈ +45°)", data["ascending"])
-    if data["descending"]:
-        plot_group("📉 Descending (≈ -45°)", data["descending"])
-    if data["flat"]:
-        plot_group("🔄 Flat/Other", data["flat"])
-else:
-    st.warning("⚠️ No data loaded. Please refresh the page.")
+# --- Display in order ---
+plot_group("📈 Ascending Charts (≈ +45°)", ascending)
+plot_group("📉 Descending Charts (≈ -45°)", descending)
+plot_group("📊 Other Charts", others)
+
+if not ascending and not descending and not others:
+    st.warning("⚠️ No charts could be displayed. Try again later.")
