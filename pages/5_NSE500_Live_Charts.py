@@ -4,22 +4,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
-from sklearn.linear_model import LinearRegression
-import numpy as np
 import os
 import random
+import numpy as np
+from scipy.stats import linregress
 
-# --- Timezone setup ---
+# --- IST Timezone setup ---
 IST = timezone(timedelta(hours=5, minutes=30))
 now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
 
-# --- Page Setup ---
+# --- Page config ---
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
 st.title("📡 NSE500 Live Charts (Intraday)")
-st.markdown(f"📅 Showing **{today_str}** — From first tick after 9:00 AM IST")
+st.markdown(f"📅 Showing **{today_str}** data — Starting from first available tick after 9:00 AM IST")
 
-# --- Load Tickers ---
+# --- Load tickers from file ---
 @st.cache_data
 def load_tickers():
     path = "data/Charts-data/tickers_Nifty500.txt"
@@ -36,83 +36,127 @@ def load_tickers():
 tickers = load_tickers()
 st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 
-# --- Fetch Intraday Data ---
+# --- Download intraday data (cached) ---
 @st.cache_data(ttl=600)
 def fetch_intraday(ticker):
     try:
         df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
-        if df.empty or "Close" not in df.columns:
-            return pd.DataFrame()
-        df = df.tz_convert(IST).tz_localize(None)
+        df = df.tz_convert(IST).tz_localize(None)  # Convert to IST and make naive
         df = df[df.index >= datetime.combine(now_ist.date(), datetime.strptime("09:00", "%H:%M").time())]
-        return df[["Close"]].dropna()
+        return df
     except:
         return pd.DataFrame()
 
-# --- Calculate Angle of Trend ---
+# --- Angle Calculation Function ---
 def calculate_angle(df):
-    if df is None or df.empty or len(df) < 2:
-        return None
-    y = df["Close"].values
-    x = np.arange(len(y)).reshape(-1, 1)
-    y_norm = (y - y.min()) / (y.max() - y.min() + 1e-9)
-    model = LinearRegression().fit(x, y_norm)
-    slope = model.coef_[0]
+    if len(df) < 2:
+        return 0
+    
+    # Convert datetime index to numeric values for regression
+    x = np.arange(len(df))
+    y = df['Close'].values
+    
+    # Perform linear regression
+    slope, _, _, _, _ = linregress(x, y)
+    
+    # Convert slope to degrees (approximate angle)
     angle = np.degrees(np.arctan(slope))
+    
     return angle
 
-# --- Trigger Data Fetch ---
+# --- Trigger Download ---
 if "intraday_data" not in st.session_state:
-    st.info("📥 Fetching intraday data...")
+    st.info("📥 Fetching live intraday data (1m interval)...")
     st.session_state.intraday_data = {}
-    random.shuffle(tickers)
+    st.session_state.angles = {}
     bar = st.progress(0)
+    random.shuffle(tickers)  # Shuffle to avoid same order every time
     for i, ticker in enumerate(tickers):
         df = fetch_intraday(ticker)
         if not df.empty:
             st.session_state.intraday_data[ticker] = df
+            angle = calculate_angle(df)
+            st.session_state.angles[ticker] = angle
         bar.progress((i + 1) / len(tickers))
     st.success("✅ Live intraday data loaded!")
 
-# --- Group by Trend Angle ---
-ascending, descending, others = [], [], []
+# --- Filter Options ---
+st.sidebar.header("Chart Filters")
+angle_filter = st.sidebar.selectbox(
+    "Sort by angle:",
+    ["All", "Ascending (~45°)", "Descending (~-45°)", "Steep Ascending (>60°)", "Steep Descending (<-60°)"]
+)
 
-for symbol, df in st.session_state.intraday_data.items():
-    angle = calculate_angle(df)
-    if angle is None:
-        continue
-    if 30 <= angle <= 60:
-        ascending.append((symbol, df, angle))
-    elif -60 <= angle <= -30:
-        descending.append((symbol, df, angle))
-    else:
-        others.append((symbol, df, angle))
+# --- Sort tickers based on angle ---
+def sort_tickers_by_angle(tickers, angles, filter_option):
+    if filter_option == "All":
+        return tickers
+    
+    filtered = []
+    for ticker in tickers:
+        angle = angles.get(ticker, 0)
+        if filter_option == "Ascending (~45°)" and 30 <= angle <= 60:
+            filtered.append(ticker)
+        elif filter_option == "Descending (~-45°)" and -60 <= angle <= -30:
+            filtered.append(ticker)
+        elif filter_option == "Steep Ascending (>60°)" and angle > 60:
+            filtered.append(ticker)
+        elif filter_option == "Steep Descending (<-60°)" and angle < -60:
+            filtered.append(ticker)
+    
+    # Sort remaining tickers by absolute angle (most significant trends first)
+    filtered.sort(key=lambda x: abs(angles.get(x, 0)), reverse=True)
+    return filtered
 
-# --- Plotting Function ---
-def plot_group(title, data_group):
-    st.subheader(title)
-    for i in range(0, len(data_group), 2):
-        cols = st.columns(2)
-        for j in range(2):
-            idx = i + j
-            if idx >= len(data_group):
-                break
-            symbol, df, angle = data_group[idx]
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df.index, df["Close"], lw=1.2)
-            ax.set_title(f"{symbol} (∠={angle:.1f}°)", fontsize=10)
-            ax.set_ylabel("Price", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
-            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
-            plt.tight_layout()
-            cols[j].pyplot(fig)
-            plt.close(fig)
-
-# --- Display Charts ---
+# --- Plot Charts ---
 if st.session_state.intraday_data:
-    plot_group("📈 Ascending Charts (≈ +45°)", ascending)
-    plot_group("📉 Descending Charts (≈ -45°)", descending)
-    plot_group("➡️ Others", others)
+    data = st.session_state.intraday_data
+    angles = st.session_state.angles
+    
+    # Apply filter
+    sorted_tickers = sort_tickers_by_angle(list(data.keys()), angles, angle_filter)
+    
+    if not sorted_tickers and angle_filter != "All":
+        st.warning(f"No charts match the {angle_filter} filter")
+    else:
+        count = 0
+        for i in range(0, len(sorted_tickers), 2):
+            cols = st.columns(2)
+            for j in range(2):
+                if i + j >= len(sorted_tickers):
+                    break
+                symbol = sorted_tickers[i + j]
+                df = data[symbol]
+                angle = angles.get(symbol, 0)
+
+                fig, ax = plt.subplots(figsize=(6, 3))
+                ax.plot(df.index, df["Close"], lw=1.2)
+                
+                # Add angle information to title
+                title = f"{symbol} (Angle: {angle:.1f}°)"
+                if angle > 45:
+                    title += " ↗↗"
+                elif angle > 15:
+                    title += " ↗"
+                elif angle < -45:
+                    title += " ↘↘"
+                elif angle < -15:
+                    title += " ↘"
+                
+                ax.set_title(title, fontsize=10)
+                ax.set_ylabel("Price", fontsize=9)
+
+                # X-axis ticks at 15-minute intervals
+                ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+                ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+                plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
+
+                plt.tight_layout()
+                cols[j].pyplot(fig)
+                plt.close(fig)
+                count += 1
+
+        if count == 0:
+            st.warning("⚠️ No valid intraday data returned. Try again later.")
 else:
-    st.warning("⚠️ No intraday data found. Please refresh.")
+    st.warning("⚠️ Data not loaded. Please refresh the page.")
