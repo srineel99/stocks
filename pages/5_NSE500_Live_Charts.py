@@ -2,123 +2,90 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.dates import DateFormatter, HourLocator
+from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, timedelta, timezone
-import numpy as np
-import random
 import os
+import random
 
+# --- IST Timezone setup ---
 IST = timezone(timedelta(hours=5, minutes=30))
-TODAY = datetime.now(IST).date()
+now_ist = datetime.now(IST)
+today_str = now_ist.date().isoformat()
+
+# --- Page config ---
 st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
+st.title("📡 NSE500 Live Charts (Intraday)")
+st.markdown(f"📅 Showing **{today_str}** data — Starting from first available tick after 9:00 AM IST")
 
-st.title("📈 NSE500 Live Charts")
-st.markdown(f"📅 **Showing:** `{TODAY}`")
-st.markdown("🔄 Refresh the page to load latest data.")
+# --- Load tickers from file ---
+@st.cache_data
+def load_tickers():
+    path = "data/Charts-data/tickers_Nifty500.txt"
+    if not os.path.exists(path):
+        st.error(f"Ticker file not found: {path}")
+        return []
+    with open(path) as f:
+        return [
+            line.strip().upper() if line.strip().upper().endswith(".NS")
+            else line.strip().upper() + ".NS"
+            for line in f if line.strip()
+        ]
 
-# Sidebar option to filter chart group
-chart_group = st.sidebar.radio(
-    "📊 Show Chart Group",
-    ["All", "Ascending (≈ +45°)", "Descending (≈ -45°)", "Neutral"],
-    index=0
-)
+tickers = load_tickers()
+st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 
-# Read tickers from file
-ticker_path = "data/Charts-data/tickers_Nifty500.txt"
-if not os.path.exists(ticker_path):
-    st.error("Ticker file not found!")
-    st.stop()
-
-with open(ticker_path, "r") as f:
-    tickers = [line.strip() for line in f if line.strip()]
-
-st.markdown(f"📌 **Total Tickers Loaded:** `{len(tickers)}`")
-
-@st.cache_data(ttl=3600)
-def fetch_intraday_data(symbols, interval="5m", period="1d"):
-    data_dict = {}
-    for symbol in symbols:
-        try:
-            df = yf.download(symbol, interval=interval, period=period, progress=False)
-            if not df.empty:
-                df = df.tz_convert("Asia/Kolkata")
-                df = df.between_time("09:15", "15:30")
-                df = df[["Close"]].dropna()
-                if len(df) > 2:
-                    data_dict[symbol] = df.copy()
-        except Exception:
-            continue
-    return data_dict
-
-def calculate_slope(df):
+# --- Download intraday data (cached) ---
+@st.cache_data(ttl=600)
+def fetch_intraday(ticker):
     try:
-        y = df["Close"].values
-        x = np.arange(len(y))
-        if len(x) < 3:
-            return None
-        slope, _ = np.polyfit(x, y, 1)
-        return slope
-    except Exception:
-        return None
+        df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
+        df = df.tz_convert(IST).tz_localize(None)  # Convert to IST and make naive
+        df = df[df.index >= datetime.combine(now_ist.date(), datetime.strptime("09:00", "%H:%M").time())]
+        return df
+    except:
+        return pd.DataFrame()
 
-def categorize_by_slope(data_dict):
-    ascending, descending, neutral = {}, {}, {}
+# --- Trigger Download ---
+if "intraday_data" not in st.session_state:
+    st.info("📥 Fetching live intraday data (1m interval)...")
+    st.session_state.intraday_data = {}
+    bar = st.progress(0)
+    random.shuffle(tickers)  # Shuffle to avoid same order every time
+    for i, ticker in enumerate(tickers):
+        df = fetch_intraday(ticker)
+        if not df.empty:
+            st.session_state.intraday_data[ticker] = df
+        bar.progress((i + 1) / len(tickers))
+    st.success("✅ Live intraday data loaded!")
 
-    for symbol, df in data_dict.items():
-        slope = calculate_slope(df)
-        if slope is None:
-            continue
-        if 0.2 <= slope <= 1.5:
-            ascending[symbol] = (df, slope)
-        elif -1.5 <= slope <= -0.2:
-            descending[symbol] = (df, slope)
-        else:
-            neutral[symbol] = (df, slope)
+# --- Plot Charts ---
+if st.session_state.intraday_data:
+    data = st.session_state.intraday_data
+    count = 0
+    for i in range(0, len(data), 2):
+        cols = st.columns(2)
+        for j in range(2):
+            if i + j >= len(data):
+                break
+            symbol = list(data.keys())[i + j]
+            df = data[symbol]
 
-    return ascending, descending, neutral
+            fig, ax = plt.subplots(figsize=(6, 3))
+            ax.plot(df.index, df["Close"], lw=1.2)
+            ax.set_title(symbol, fontsize=10)
+            ax.set_ylabel("Price", fontsize=9)
 
-def plot_chart(symbol, df, slope=None):
-    fig, ax = plt.subplots(figsize=(4, 2))
-    ax.plot(df.index, df["Close"], linewidth=1.5)
-    ax.set_title(f"{symbol}" + (f" (slope={slope:.2f})" if slope is not None else ""), fontsize=9)
-    ax.set_ylabel("Price", fontsize=7)
-    ax.tick_params(axis="x", labelsize=6)
-    ax.tick_params(axis="y", labelsize=6)
-    ax.xaxis.set_major_locator(HourLocator(interval=1))
-    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    return fig
+            # X-axis ticks at 15-minute intervals
+            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
 
-def display_group(title, chart_dict):
-    st.subheader(title)
-    if not chart_dict:
-        st.warning(f"No data available for {title}")
-        return
+            plt.tight_layout()
+            cols[j].pyplot(fig)
+            plt.close(fig)
+            count += 1
 
-    symbols = list(chart_dict.keys())
-    cols = st.columns(2)
-    for idx, symbol in enumerate(symbols):
-        df, slope = chart_dict[symbol]
-        with cols[idx % 2]:
-            st.pyplot(plot_chart(symbol, df, slope))
-
-# Limit to max 500 stocks for better performance (or use all)
-selected_tickers = random.sample(tickers, len(tickers))
-
-# Fetch and categorize
-with st.status("📡 Fetching live data...", expanded=False):
-    data_dict = fetch_intraday_data(selected_tickers)
-    ascending, descending, neutral = categorize_by_slope(data_dict)
-
-# Show chart groups based on sidebar filter
-if chart_group == "All":
-    display_group("📈 Ascending (≈ +45°)", ascending)
-    display_group("📉 Descending (≈ -45°)", descending)
-    display_group("➖ Neutral", neutral)
-elif chart_group == "Ascending (≈ +45°)":
-    display_group("📈 Ascending (≈ +45°)", ascending)
-elif chart_group == "Descending (≈ -45°)":
-    display_group("📉 Descending (≈ -45°)", descending)
+    if count == 0:
+        st.warning("⚠️ No valid intraday data returned. Try again later.")
 else:
-    display_group("➖ Neutral", neutral)
+    st.warning("⚠️ Data not loaded. Please refresh the page.")
