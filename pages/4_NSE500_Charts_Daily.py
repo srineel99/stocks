@@ -19,7 +19,7 @@ st.markdown(f"📅 **Showing {today_str} Data From 9:15 AM IST**")
 # -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
-    path = "data/Charts-data/tickers_Nitfy500.txt"  # ✅ FIXED typo from "Nitfy" to "Nifty"
+    path = "data/Charts-data/tickers_Nifty500.txt"  # ✅ make sure typo is fixed
     if not os.path.exists(path):
         st.error(f"Ticker file not found: {path}")
         return []
@@ -44,7 +44,9 @@ def fetch_intraday_data(ticker, interval):
     try:
         df = yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
         start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
-        return df[df.index >= start_time]
+        df = df[df.index >= start_time]
+        df.index = df.index.tz_convert(IST)  # ✅ convert timestamps to IST
+        return df
     except:
         return pd.DataFrame()
 
@@ -78,7 +80,7 @@ else:
             ax.plot(df.index, df["Close"], lw=1)
             ax.set_title(symbol, fontsize=11)
             ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 10)))  # ✅ 10-min tick spacing
+            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))  # ✅ 15-minute interval
             ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
             plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
             plt.tight_layout()
