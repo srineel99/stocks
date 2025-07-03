@@ -6,11 +6,10 @@ from datetime import datetime, timedelta, timezone
 import matplotlib.dates as mdates
 import os
 
-# -------------------- IST Time Handling --------------------
+# -------------------- Timezone Setup --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_ist_now():
-    """Returns current time in IST, independent of server time zone."""
     return datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(IST)
 
 def get_cache_date() -> str:
@@ -48,14 +47,25 @@ selected_range = st.sidebar.slider("Latest Price Range (Today)", min_value=price
 # -------------------- Data Fetching --------------------
 @st.cache_data(ttl=900)
 def download_data(ticker: str, interval: str) -> pd.DataFrame:
-    df = yf.download(ticker, period="1d", interval=interval, progress=False, auto_adjust=True)
-    if df.empty:
-        return df
-    df.index = df.index.tz_localize(None)
-    ist_today = get_ist_now().date()
-    market_start = datetime.combine(ist_today, datetime.strptime("09:15", "%H:%M").time())
-    df = df[df.index >= market_start]
-    return df
+    try:
+        df = yf.download(
+            tickers=ticker,
+            period="1d",
+            interval=interval,
+            progress=False,
+            auto_adjust=True,
+            prepost=False,
+            threads=False,
+        )
+        if df.empty:
+            return pd.DataFrame()
+        df.index = df.index.tz_localize(None)
+        ist_today = get_ist_now().date()
+        market_start = datetime.combine(ist_today, datetime.strptime("09:15", "%H:%M").time())
+        return df[df.index >= market_start]
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch {ticker}: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=86400)
 def get_company_name(ticker: str) -> str:
@@ -69,7 +79,6 @@ def get_company_name(ticker: str) -> str:
 st.markdown(f"**🧾 Total Tickers:** {len(tickers)}")
 st.markdown(f"**📅 Showing {interval} Data Since 9:15 AM IST — {CACHE_DATE}**")
 
-# Warn if before 9:15 IST
 if get_ist_now().time() < datetime.strptime("09:15", "%H:%M").time():
     st.warning("⚠️ Market opens at 9:15 AM IST. Please try again after that for today's data.")
 
@@ -84,12 +93,15 @@ if st.button(download_label):
         progress.progress((i + 1) / len(tickers))
 
     non_empty = {k: v for k, v in st.session_state.data.items() if v is not None and not v.empty}
+    failed = [k for k in tickers if k not in non_empty]
     st.session_state.data = non_empty
 
     if not non_empty:
-        st.error("⚠️ No data downloaded. Market may be closed or Yahoo Finance has delayed today's data.")
+        st.error("❌ No data downloaded. Market may be closed or Yahoo Finance has delayed today's data.")
     else:
         st.success(f"✅ Intraday ({interval}) data downloaded for {len(non_empty)} tickers.")
+        if failed:
+            st.warning(f"⚠️ {len(failed)} tickers returned no data. Example: {', '.join(failed[:5])}")
 
 if "data" not in st.session_state or not st.session_state.data:
     st.info("📌 Please download intraday data first.")
