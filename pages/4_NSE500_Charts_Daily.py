@@ -2,9 +2,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.dates import MinuteLocator, DateFormatter
+from matplotlib.dates import DateFormatter
 from datetime import datetime, time, timedelta, timezone
-import os, random, time as systime
+import os, time as systime
 
 # -------------------- Timezone Setup (IST) --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -16,7 +16,7 @@ st.set_page_config(page_title="NSE500 Intraday Charts", layout="wide")
 st.title("📈 Intraday Charts — From 9:15 AM IST (Nifty 500)")
 st.markdown(f"📅 **Showing {today_str} | 5-minute Interval Data**")
 
-# -------------------- Load 100 Random Tickers --------------------
+# -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
     path = "data/Charts-data/tickers_Nifty500.txt"
@@ -24,15 +24,14 @@ def load_tickers():
         st.error(f"Ticker file not found: {path}")
         return []
     with open(path) as f:
-        all_tickers = [
+        return [
             line.strip().upper() if line.strip().upper().endswith(".NS")
             else line.strip().upper() + ".NS"
             for line in f if line.strip()
         ]
-    return random.sample(all_tickers, min(100, len(all_tickers)))
 
 tickers = load_tickers()
-st.markdown(f"📊 **Randomly Selected Tickers:** {len(tickers)}")
+st.markdown(f"📊 **Total Tickers:** {len(tickers)}")
 
 # -------------------- Fetch Intraday Data --------------------
 def fetch_intraday_data(ticker):
@@ -40,8 +39,8 @@ def fetch_intraday_data(ticker):
         df = yf.download(ticker, period="1d", interval="5m", progress=False, auto_adjust=True)
         if df.empty:
             return pd.DataFrame()
-        df.index = df.index.tz_convert(IST)
-        start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+        start_time = datetime.combine(now_ist.date(), time(9, 15))
         return df[df.index >= start_time]
     except:
         return pd.DataFrame()
@@ -69,10 +68,18 @@ if "data" not in st.session_state or st.button("📥 Load Intraday Data"):
         trend, slope = classify_trend(df)
         if not df.empty:
             st.session_state.data[trend].append((ticker, df, slope))
-        systime.sleep(0.8)
+        systime.sleep(0.4)  # reduce delay slightly for performance
         bar.progress((i + 1) / len(tickers))
     bar.empty()
     st.success("✅ Intraday data downloaded and grouped!")
+
+# -------------------- Fixed IST Time Ticks --------------------
+def get_ist_ticks():
+    return pd.date_range(
+        start=datetime.combine(now_ist.date(), time(9, 15)),
+        end=datetime.combine(now_ist.date(), time(15, 30)),
+        freq="15min"
+    )
 
 # -------------------- Chart Plotting --------------------
 def plot_chart(symbol, df, slope):
@@ -84,9 +91,9 @@ def plot_chart(symbol, df, slope):
     ax.plot(df.index, df["Close"], lw=1.2)
     ax.set_title(f"{symbol} (slope={slope_val:.2f})", fontsize=10)
     ax.set_ylabel("Close", fontsize=8)
-    ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
-    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
+    ax.set_xticks(get_ist_ticks())
+    ax.set_xticklabels([t.strftime("%H:%M") for t in get_ist_ticks()], rotation=45, ha="right", fontsize=7)
+    ax.set_xlim(get_ist_ticks()[0], get_ist_ticks()[-1])
     plt.tight_layout()
     return fig
 
