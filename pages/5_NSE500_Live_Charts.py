@@ -44,7 +44,8 @@ def fetch_intraday(ticker):
         df = df.tz_convert(IST).tz_localize(None)  # Convert to IST and make naive
         df = df[df.index >= datetime.combine(now_ist.date(), datetime.strptime("09:00", "%H:%M").time())]
         return df
-    except:
+    except Exception as e:
+        st.error(f"Error fetching data for {ticker}: {str(e)}")
         return pd.DataFrame()
 
 # --- Angle Calculation Function ---
@@ -52,33 +53,39 @@ def calculate_angle(df):
     if len(df) < 2:
         return 0
     
-    # Convert datetime index to numeric values for regression
     x = np.arange(len(df))
     y = df['Close'].values
     
-    # Perform linear regression
     slope, _, _, _, _ = linregress(x, y)
-    
-    # Convert slope to degrees (approximate angle)
     angle = np.degrees(np.arctan(slope))
     
     return angle
 
-# --- Trigger Download ---
-if "intraday_data" not in st.session_state:
-    st.info("📥 Fetching live intraday data (1m interval)...")
+# --- Main App Logic ---
+if 'intraday_data' not in st.session_state or 'angles' not in st.session_state:
     st.session_state.intraday_data = {}
     st.session_state.angles = {}
+
+if not st.session_state.intraday_data:
+    st.info("📥 Fetching live intraday data (1m interval)...")
     bar = st.progress(0)
-    random.shuffle(tickers)  # Shuffle to avoid same order every time
+    random.shuffle(tickers)
+    
+    successful_loads = 0
     for i, ticker in enumerate(tickers):
         df = fetch_intraday(ticker)
         if not df.empty:
             st.session_state.intraday_data[ticker] = df
             angle = calculate_angle(df)
             st.session_state.angles[ticker] = angle
+            successful_loads += 1
         bar.progress((i + 1) / len(tickers))
-    st.success("✅ Live intraday data loaded!")
+    
+    if successful_loads > 0:
+        st.success(f"✅ Successfully loaded data for {successful_loads}/{len(tickers)} tickers")
+    else:
+        st.error("❌ Failed to load data for any tickers. Please check your internet connection and try again.")
+        st.stop()
 
 # --- Filter Options ---
 st.sidebar.header("Chart Filters")
@@ -90,10 +97,12 @@ angle_filter = st.sidebar.selectbox(
 # --- Sort tickers based on angle ---
 def sort_tickers_by_angle(tickers, angles, filter_option):
     if filter_option == "All":
-        return tickers
+        return [t for t in tickers if t in st.session_state.intraday_data]
     
     filtered = []
     for ticker in tickers:
+        if ticker not in st.session_state.intraday_data:
+            continue
         angle = angles.get(ticker, 0)
         if filter_option == "Ascending (~45°)" and 30 <= angle <= 60:
             filtered.append(ticker)
@@ -104,16 +113,14 @@ def sort_tickers_by_angle(tickers, angles, filter_option):
         elif filter_option == "Steep Descending (<-60°)" and angle < -60:
             filtered.append(ticker)
     
-    # Sort remaining tickers by absolute angle (most significant trends first)
     filtered.sort(key=lambda x: abs(angles.get(x, 0)), reverse=True)
     return filtered
 
 # --- Plot Charts ---
-if st.session_state.intraday_data:
-    data = st.session_state.intraday_data
-    angles = st.session_state.angles
-    
-    # Apply filter
+data = st.session_state.intraday_data
+angles = st.session_state.angles
+
+if data:
     sorted_tickers = sort_tickers_by_angle(list(data.keys()), angles, angle_filter)
     
     if not sorted_tickers and angle_filter != "All":
@@ -132,7 +139,6 @@ if st.session_state.intraday_data:
                 fig, ax = plt.subplots(figsize=(6, 3))
                 ax.plot(df.index, df["Close"], lw=1.2)
                 
-                # Add angle information to title
                 title = f"{symbol} (Angle: {angle:.1f}°)"
                 if angle > 45:
                     title += " ↗↗"
@@ -145,18 +151,14 @@ if st.session_state.intraday_data:
                 
                 ax.set_title(title, fontsize=10)
                 ax.set_ylabel("Price", fontsize=9)
-
-                # X-axis ticks at 15-minute intervals
                 ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
                 ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
                 plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
-
                 plt.tight_layout()
                 cols[j].pyplot(fig)
                 plt.close(fig)
                 count += 1
 
-        if count == 0:
-            st.warning("⚠️ No valid intraday data returned. Try again later.")
+        st.markdown(f"**Displaying {count} charts**")
 else:
-    st.warning("⚠️ Data not loaded. Please refresh the page.")
+    st.error("No data available. Please refresh the page.")
