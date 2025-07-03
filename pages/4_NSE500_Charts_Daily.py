@@ -43,40 +43,62 @@ def fetch_intraday_data(ticker):
         df.index = df.index.tz_convert(IST)
         start_time = datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)
         return df[df.index >= start_time]
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
-# -------------------- Data Collection --------------------
-available_data = {}
-progress = st.progress(0, text="⏳ Fetching fresh intraday data (5m interval)...")
+# -------------------- Classify Trend --------------------
+def classify_trend(df, threshold=0.05):
+    if df is None or df.empty:
+        return "flat", 0
+    y = df["Close"].values
+    slope = (y[-1] - y[0]) / len(y)
+    if slope > threshold:
+        return "ascending", slope
+    elif slope < -threshold:
+        return "descending", slope
+    else:
+        return "flat", slope
+
+# -------------------- Fetch and Classify --------------------
+available_data = {"ascending": [], "descending": [], "flat": []}
+progress = st.progress(0, text="⏳ Fetching and classifying live intraday charts...")
+
 for i, ticker in enumerate(tickers):
     df = fetch_intraday_data(ticker)
+    trend, slope = classify_trend(df)
     if not df.empty:
-        available_data[ticker] = df
-    systime.sleep(0.8)  # prevent getting blocked by Yahoo
+        available_data[trend].append((ticker, df, slope))
+    systime.sleep(0.8)
     progress.progress((i + 1) / len(tickers))
 progress.empty()
 
-# -------------------- Display Charts --------------------
-if not available_data:
-    st.warning("⚠️ No intraday data available for any stock. Try again later.")
-else:
-    st.success("✅ Live intraday data loaded!")
-    for i in range(0, len(available_data), 2):
+# -------------------- Display Charts Grouped by Trend --------------------
+def plot_chart(symbol, df, slope):
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(df.index, df["Close"], lw=1.2)
+    ax.set_title(f"{symbol} (slope={slope:.2f})", fontsize=10)
+    ax.set_ylabel("Close", fontsize=8)
+    ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
+    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
+    plt.tight_layout()
+    return fig
+
+def display_group(title, group_data):
+    st.subheader(title)
+    for i in range(0, len(group_data), 2):
         cols = st.columns(2)
         for j in range(2):
             idx = i + j
-            if idx >= len(available_data):
+            if idx >= len(group_data):
                 break
-            symbol = list(available_data.keys())[idx]
-            df = available_data[symbol]
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df.index, df["Close"], lw=1.2)
-            ax.set_title(symbol, fontsize=11)
-            ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
-            ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
-            plt.tight_layout()
-            cols[j].pyplot(fig)
-            plt.close(fig)
+            symbol, df, slope = group_data[idx]
+            cols[j].pyplot(plot_chart(symbol, df, slope))
+
+if not any(available_data.values()):
+    st.warning("⚠️ No intraday data available for any stock. Try again later.")
+else:
+    st.success("✅ Live intraday data loaded and sorted by trend!")
+    display_group("📈 Ascending (≈ +45°) Charts", available_data["ascending"])
+    display_group("📉 Descending (≈ -45°) Charts", available_data["descending"])
+    display_group("➡️ Flat/Other Charts", available_data["flat"])
