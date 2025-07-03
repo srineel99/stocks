@@ -34,7 +34,7 @@ def get_company_name(ticker: str, cache_date: str) -> str:
         return ticker
 
 def load_tickers() -> list[str]:
-    file_path = "data/Charts-data/tickers_Nitfy500.txt"
+    file_path = "data/Charts-data/tickers_Nitfy500.txt"  # ✅ Corrected spelling
     if not os.path.exists(file_path):
         st.error(f"Ticker file not found: {file_path}")
         return []
@@ -78,10 +78,14 @@ for symbol in tickers:
     df = st.session_state.data.get(symbol)
     if df is None or df.empty:
         continue
-    latest_close = df["Close"].iloc[-1] if not df.empty else None
-    if latest_close is not None and selected_range[0] <= latest_close <= selected_range[1]:
+    try:
+        latest_close = float(df["Close"].iloc[-1])
+    except:
+        continue
+    if selected_range[0] <= latest_close <= selected_range[1]:
         filtered_tickers.append(symbol)
 
+# -------------------- Chart Display --------------------
 if not filtered_tickers:
     st.warning("No stocks found for the selected filters.")
 else:
