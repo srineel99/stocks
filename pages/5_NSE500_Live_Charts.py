@@ -50,12 +50,12 @@ def fetch_intraday(ticker):
     except:
         return pd.DataFrame()
 
-# --- Angle Calculation ---
+# --- Angle Calculation (safe) ---
 def calculate_angle(df):
-    if df is None or df.empty or "Close" not in df.columns or len(df) < 2:
+    if df is None or df.empty or "Close" not in df.columns:
         return None
-    df = df.dropna(subset=["Close"])
-    if df.empty:
+    df = df[["Close"]].dropna()
+    if df.empty or len(df) < 2:
         return None
     y = df["Close"].values
     x = np.arange(len(y)).reshape(-1, 1)
@@ -84,7 +84,7 @@ if "intraday_data" not in st.session_state:
     st.success("✅ Live intraday data loaded!")
 
 # --- Chart Plot Function ---
-def plot_group(title, data_group, angle_filter=None):
+def plot_group(title, data_group):
     st.subheader(title)
     count = 0
     for i in range(0, len(data_group), 2):
