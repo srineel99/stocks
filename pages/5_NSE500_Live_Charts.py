@@ -47,7 +47,7 @@ def fetch_intraday(ticker):
     except:
         return pd.DataFrame()
 
-# --- Slope classification using linear regression ---
+# --- Angle classification using linear regression ---
 def get_angle(df):
     try:
         if df is None or df.empty or len(df) < 10:
@@ -62,7 +62,7 @@ def get_angle(df):
     except:
         return None
 
-# --- Trigger Download and Classification ---
+# --- Trigger Download and Grouping ---
 if "intraday_data" not in st.session_state:
     st.info("📥 Fetching intraday data (1m)...")
     st.session_state.intraday_data = {}
@@ -83,7 +83,7 @@ others = []
 if st.session_state.intraday_data:
     for symbol, df in st.session_state.intraday_data.items():
         angle = get_angle(df)
-        if angle is None:
+        if angle is None or not np.isfinite(angle):
             continue
         if 40 <= angle <= 50:
             ascending.append((symbol, df, angle))
@@ -106,7 +106,8 @@ def plot_group(title, group):
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.plot(df.index, df["Close"], lw=1.2)
 
-            angle_label = f"{angle:.1f}°" if angle is not None else "N/A"
+            # Only show angle if it's a valid number
+            angle_label = f"{angle:.1f}°" if np.isfinite(angle) else "N/A"
             ax.set_title(f"{symbol} (angle={angle_label})", fontsize=10)
             ax.set_ylabel("Price", fontsize=9)
             ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
@@ -116,7 +117,7 @@ def plot_group(title, group):
             cols[j].pyplot(fig)
             plt.close(fig)
 
-# --- Display in order ---
+# --- Display groups ---
 plot_group("📈 Ascending Charts (≈ +45°)", ascending)
 plot_group("📉 Descending Charts (≈ -45°)", descending)
 plot_group("📊 Other Charts", others)
