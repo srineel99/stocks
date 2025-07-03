@@ -6,20 +6,20 @@ from matplotlib.dates import MinuteLocator, DateFormatter
 from datetime import datetime, time, timedelta, timezone
 import os
 
-# -------------------- Timezone Setup (IST) --------------------
+# -------------------- Timezone Setup --------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
 
-# -------------------- Config --------------------
-st.set_page_config(page_title="NSE500 Intraday Charts", layout="wide")
-st.title("📊 Intraday Charts — From 9:15 AM IST (Nifty 500)")
-st.markdown(f"📅 **Showing {today_str} Intraday Charts From 9:15 AM IST**")
+# -------------------- Streamlit Config --------------------
+st.set_page_config(page_title="Intraday Charts", layout="wide")
+st.title("📈 Intraday Charts — From 9:15 AM IST (Nifty 500)")
+st.markdown(f"📅 **Showing: {today_str}**")
 
 # -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
-    path = "data/Charts-data/tickers_Nifty500.txt"
+    path = "data/Charts-data/tickers_Nifty500.txt"  # ✅ make sure this path is correct
     if not os.path.exists(path):
         st.error(f"Ticker file not found: {path}")
         return []
@@ -31,59 +31,43 @@ def load_tickers():
         ]
 
 tickers = load_tickers()
-st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
+st.markdown(f"🧾 Total Tickers: **{len(tickers)}**")
 
-# -------------------- Fetch Function --------------------
+# -------------------- Download Intraday Data --------------------
 def fetch_intraday_data(ticker):
     try:
-        df = yf.download(
-            ticker,
-            period="1d",
-            interval="5m",
-            progress=False,
-            auto_adjust=True
-        )
+        df = yf.download(ticker, period="1d", interval="5m", progress=False, auto_adjust=True)
         if df.empty:
-            return df
-        df.index = df.index.tz_localize('UTC').tz_convert(IST)  # ✅ Convert to IST
+            return pd.DataFrame()
+        df.index = df.index.tz_localize("UTC").tz_convert(IST)
         df = df[df.index >= datetime.combine(now_ist.date(), time(9, 15)).replace(tzinfo=IST)]
         return df
     except:
         return pd.DataFrame()
 
-# -------------------- Fetch & Plot --------------------
 st.info("🔄 Fetching fresh intraday data (5m interval)...")
-data_dict = {}
-bar = st.progress(0)
-for i, ticker in enumerate(tickers):
+available_data = {}
+for ticker in tickers:
     df = fetch_intraday_data(ticker)
-    data_dict[ticker] = df
-    bar.progress((i + 1) / len(tickers))
-st.success("✅ Live intraday data loaded!")
+    if not df.empty:
+        available_data[ticker] = df
 
-# -------------------- Display Charts --------------------
-empty = True
-for i in range(0, len(tickers), 2):
-    cols = st.columns(2)
-    for j in range(2):
-        idx = i + j
-        if idx >= len(tickers):
-            break
-        symbol = tickers[idx]
-        df = data_dict.get(symbol)
-        if df is None or df.empty:
-            cols[j].warning(f"No intraday data for {symbol}")
-            continue
-        empty = False
+if not available_data:
+    st.warning("⚠️ No intraday data available for any stock. Try again later.")
+else:
+    st.success("✅ Live intraday data loaded!")
+
+    for i, (symbol, df) in enumerate(available_data.items()):
+        if i % 2 == 0:
+            cols = st.columns(2)
+
         fig, ax = plt.subplots(figsize=(6, 3))
         ax.plot(df.index, df["Close"], lw=1)
         ax.set_title(symbol, fontsize=11)
         ax.set_ylabel("Close", fontsize=9)
-        ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))  # ✅ X-axis every 15 min
+        ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 15)))
         ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
         plt.tight_layout()
-        cols[j].pyplot(fig)
+        cols[i % 2].pyplot(fig)
         plt.close(fig)
-if empty:
-    st.warning("⚠️ No data returned for any ticker. Try after 9:15 AM IST.")
