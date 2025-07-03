@@ -19,12 +19,16 @@ st.markdown(f"📅 **Showing {today_str} Data From 9:15 AM IST**")
 # -------------------- Load Tickers --------------------
 @st.cache_data
 def load_tickers():
-    path = "data/Charts-data/tickers_Nitfy500.txt"
+    path = "data/Charts-data/tickers_Nifty500.txt"  # ✅ FIXED typo from "Nitfy" to "Nifty"
     if not os.path.exists(path):
         st.error(f"Ticker file not found: {path}")
         return []
     with open(path) as f:
-        return [line.strip().upper() + ".NS" for line in f if line.strip()]
+        return [
+            line.strip().upper() if line.strip().upper().endswith(".NS")
+            else line.strip().upper() + ".NS"
+            for line in f if line.strip()
+        ]
 
 tickers = load_tickers()
 st.markdown(f"🧾 **Total Tickers:** {len(tickers)}")
@@ -74,7 +78,7 @@ else:
             ax.plot(df.index, df["Close"], lw=1)
             ax.set_title(symbol, fontsize=11)
             ax.set_ylabel("Close", fontsize=9)
-            ax.xaxis.set_major_locator(MinuteLocator(interval=10))  # <-- 10min spacing
+            ax.xaxis.set_major_locator(MinuteLocator(byminute=range(0, 60, 10)))  # ✅ 10-min tick spacing
             ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
             plt.setp(ax.get_xticklabels(), rotation=45, ha="right", fontsize=7)
             plt.tight_layout()
@@ -82,4 +86,3 @@ else:
             plt.close(fig)
     if empty:
         st.warning("⚠️ No data returned for any ticker. Try after 9:15 AM IST.")
-
