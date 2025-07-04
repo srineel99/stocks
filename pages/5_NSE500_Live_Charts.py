@@ -14,18 +14,9 @@ now_ist = datetime.now(IST)
 today_str = now_ist.date().isoformat()
 
 # --- Setup with Error Prevention ---
-def safe_setup():
-    try:
-        st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
-        st.title("📡 NSE500 Live Charts (Intraday)")
-        st.markdown(f"📅 Showing **{today_str}** data — Starting from first available tick after 9:00 AM IST")
-        return True
-    except:
-        return False
-
-if not safe_setup():
-    st.error("Initialization failed. Please refresh the page.")
-    st.stop()
+st.set_page_config(page_title="NSE500 Live Charts", layout="wide")
+st.title("📡 NSE500 Live Charts (Intraday)")
+st.markdown(f"📅 Showing **{today_str}** data — Starting from first available tick after 9:00 AM IST")
 
 # --- Ticker Loading with Validation ---
 @st.cache_data
@@ -54,6 +45,35 @@ if not tickers:
 
 st.markdown(f"📈 **Total Tickers:** {len(tickers)}")
 
+# --- Enhanced Angle Calculation ---
+def calculate_angle(df):
+    try:
+        if len(df) < 10:  # Need enough data points
+            return 0.0
+            
+        # Normalize prices to percentage changes from open
+        open_price = df['Close'].iloc[0]
+        if open_price == 0:
+            return 0.0
+        normalized_prices = (df['Close'] - open_price) / open_price * 100
+        
+        # Use time in hours for x-axis
+        time_hours = (df.index - df.index[0]).total_seconds() / 3600
+        if time_hours[-1] == 0:  # Prevent division by zero
+            return 0.0
+            
+        # Calculate regression on normalized data
+        slope, _, _, _, _ = linregress(time_hours, normalized_prices)
+        angle = np.degrees(np.arctan(slope))
+        
+        # Adjust angle sensitivity
+        if abs(angle) > 70:  # Very steep trends
+            return angle * 0.7  # Scale down extreme angles
+        return angle
+        
+    except Exception:
+        return 0.0
+
 # --- Ultra-Safe Data Download ---
 def fetch_intraday_data(ticker):
     try:
@@ -74,31 +94,6 @@ def fetch_intraday_data(ticker):
             return None
     except:
         return None
-
-# --- Foolproof Angle Calculation ---
-def calculate_angle(df):
-    try:
-        # Validate input
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return 0.0
-        if 'Close' not in df.columns or len(df['Close']) < 2:
-            return 0.0
-            
-        # Check for flat line
-        close_prices = df['Close'].values
-        if np.allclose(close_prices, close_prices[0], rtol=1e-5, atol=1e-8):
-            return 0.0
-            
-        # Safe regression
-        x = np.arange(len(df))
-        y = close_prices
-        try:
-            slope = linregress(x, y).slope
-            return float(np.degrees(np.arctan(slope)))
-        except:
-            return 0.0
-    except:
-        return 0.0
 
 # --- Main Application Flow ---
 if 'app_state' not in st.session_state:
@@ -139,22 +134,24 @@ if not st.session_state.app_state['loaded']:
             st.error("Critical failure. Please check your internet connection and try again.")
             st.stop()
 
-# --- Filtering Interface ---
+# --- Enhanced Filtering Interface ---
 st.sidebar.header("Trend Filters")
 filter_choice = st.sidebar.selectbox(
     "Select Trend Type:",
     options=[
         "All Charts",
-        "Strong Uptrend (≥45°)", 
+        "Strong Uptrend (≈45°)", 
         "Moderate Uptrend (15-45°)",
         "Sideways (-15° to 15°)",
         "Moderate Downtrend (-15° to -45°)",
-        "Strong Downtrend (≤-45°)"
+        "Strong Downtrend (≈-45°)",
+        "Very Steep (>60°)",
+        "Very Steep (<-60°)"
     ],
     index=0
 )
 
-# --- Filter Implementation ---
+# --- Enhanced Filter Implementation ---
 def apply_filter():
     filtered = []
     angles = st.session_state.app_state['angles']
@@ -164,15 +161,19 @@ def apply_filter():
         
         if filter_choice == "All Charts":
             filtered.append((ticker, angle))
-        elif filter_choice == "Strong Uptrend (≥45°)" and angle >= 45:
+        elif filter_choice == "Strong Uptrend (≈45°)" and 35 <= angle <= 55:
             filtered.append((ticker, angle))
-        elif filter_choice == "Moderate Uptrend (15-45°)" and 15 <= angle < 45:
+        elif filter_choice == "Moderate Uptrend (15-45°)" and 15 <= angle < 35:
             filtered.append((ticker, angle))
         elif filter_choice == "Sideways (-15° to 15°)" and -15 < angle < 15:
             filtered.append((ticker, angle))
-        elif filter_choice == "Moderate Downtrend (-15° to -45°)" and -45 < angle <= -15:
+        elif filter_choice == "Moderate Downtrend (-15° to -45°)" and -35 < angle <= -15:
             filtered.append((ticker, angle))
-        elif filter_choice == "Strong Downtrend (≤-45°)" and angle <= -45:
+        elif filter_choice == "Strong Downtrend (≈-45°)" and -55 <= angle <= -35:
+            filtered.append((ticker, angle))
+        elif filter_choice == "Very Steep (>60°)" and angle > 60:
+            filtered.append((ticker, angle))
+        elif filter_choice == "Very Steep (<-60°)" and angle < -60:
             filtered.append((ticker, angle))
     
     # Sort by absolute angle (strongest trends first)
@@ -180,7 +181,56 @@ def apply_filter():
 
 filtered_tickers = apply_filter()
 
-# --- Visualization ---
+# --- Enhanced Visualization ---
+def plot_chart(ticker, df, angle):
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    
+    # Plot trend line
+    time_hours = (df.index - df.index[0]).total_seconds() / 3600
+    try:
+        slope, intercept, *_ = linregress(time_hours, df['Close'])
+        trend_line = slope * time_hours + intercept
+        ax.plot(df.index, trend_line, '--', color='orange', alpha=0.7, linewidth=2, label='Trend Line')
+    except:
+        pass
+    
+    # Plot price
+    color = 'green' if angle > 5 else 'red' if angle < -5 else 'gray'
+    ax.plot(df.index, df['Close'], color=color, linewidth=2.5, label='Price')
+    
+    # Annotate angle
+    ax.annotate(f"Angle: {angle:.1f}°", 
+               xy=(0.02, 0.95), xycoords='axes fraction',
+               bbox=dict(boxstyle='round', alpha=0.2))
+    
+    # Dynamic title with emoji indicators
+    if angle >= 55: emoji = "🚀"
+    elif angle >= 35: emoji = "📈↑↑"
+    elif angle >= 15: emoji = "📈↑"
+    elif angle <= -55: emoji = "💥" 
+    elif angle <= -35: emoji = "📉↓↓"
+    elif angle <= -15: emoji = "📉↓"
+    else: emoji = "➡️"
+    
+    ax.set_title(
+        f"{emoji} {ticker} ({angle:.1f}°)",
+        fontsize=12,
+        pad=12,
+        color=color
+    )
+    
+    # Axis formatting
+    ax.set_ylabel("Price", fontsize=10)
+    ax.xaxis.set_major_locator(MinuteLocator(byminute=[0, 30]))
+    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    plt.xticks(rotation=45, ha='right', fontsize=9)
+    plt.grid(alpha=0.2)
+    plt.legend()
+    plt.tight_layout()
+    
+    return fig
+
+# --- Display Charts ---
 if not filtered_tickers:
     st.warning("No charts match the selected filter")
 else:
@@ -192,42 +242,30 @@ else:
         
         with cols[idx % 2]:
             try:
-                fig, ax = plt.subplots(figsize=(6, 3.5))
-                
-                # Plot styling
-                color = 'green' if angle > 0 else 'red' if angle < 0 else 'gray'
-                ax.plot(df.index, df['Close'], color=color, linewidth=1.8)
-                
-                # Dynamic title with emoji indicators
-                if angle >= 45: emoji = "🚀"
-                elif angle >= 15: emoji = "📈"
-                elif angle <= -45: emoji = "💥" 
-                elif angle <= -15: emoji = "📉"
-                else: emoji = "➡️"
-                
-                ax.set_title(
-                    f"{emoji} {ticker} ({angle:.1f}°)",
-                    fontsize=11,
-                    pad=12,
-                    color=color
-                )
-                
-                # Axis formatting
-                ax.set_ylabel("Price", fontsize=9)
-                ax.xaxis.set_major_locator(MinuteLocator(byminute=[0, 30]))
-                ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-                plt.xticks(rotation=45, ha='right', fontsize=8)
-                plt.grid(alpha=0.2)
-                plt.tight_layout()
-                
+                fig = plot_chart(ticker, df, angle)
                 st.pyplot(fig)
                 plt.close(fig)
             except:
                 st.warning(f"Couldn't display chart for {ticker}")
 
+# --- Debug Information ---
+if st.sidebar.checkbox("Show angle distribution"):
+    angles = list(st.session_state.app_state['angles'].values())
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(angles, bins=30, color='skyblue', edgecolor='black')
+    ax.set_title("Angle Distribution Across All Tickers", pad=15)
+    ax.set_xlabel("Angle (degrees)", labelpad=10)
+    ax.set_ylabel("Count", labelpad=10)
+    ax.axvline(x=45, color='red', linestyle='--', alpha=0.5, label='45°')
+    ax.axvline(x=-45, color='red', linestyle='--', alpha=0.5)
+    ax.grid(alpha=0.2)
+    ax.legend()
+    st.pyplot(fig)
+    plt.close(fig)
+
 # --- Refresh Mechanism ---
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Full Reset", help="Clear all cached data and reload"):
+if st.sidebar.button("🔄 Full Reset", help="Clear all cached data and reload", type="primary"):
     st.cache_data.clear()
     st.session_state.clear()
     st.rerun()
