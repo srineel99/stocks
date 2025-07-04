@@ -65,9 +65,9 @@ def classify(df):
     angle = calculate_angle(df)
     if angle is None:
         return "other", angle
-    if 35 <= angle <= 55:
+    if 25 <= angle <= 65:
         return "ascending", angle
-    elif -55 <= angle <= -35:
+    elif -65 <= angle <= -25:
         return "descending", angle
     else:
         return "other", angle
@@ -85,6 +85,8 @@ if "intraday_data" not in st.session_state:
         bar.progress((i + 1) / len(tickers))
     bar.empty()
     st.success("✅ Data loaded and categorized!")
+    # Debug count
+    st.info(f"📈 Ascending: {len(st.session_state.intraday_data['ascending'])} | 📉 Descending: {len(st.session_state.intraday_data['descending'])} | ➡️ Other: {len(st.session_state.intraday_data['other'])}")
 
 # --- Chart Plotting ---
 def plot_chart(ticker, df, angle):
@@ -101,9 +103,10 @@ def plot_chart(ticker, df, angle):
 
 # --- Display grouped charts ---
 def display_group(title, group_data):
-    if not group_data:
-        return
     st.subheader(title)
+    if not group_data:
+        st.warning(f"⚠️ No charts found for {title}")
+        return
     for i in range(0, len(group_data), 2):
         cols = st.columns(2)
         for j in range(2):
